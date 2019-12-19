@@ -10,10 +10,13 @@ import {
 	GitFile,
 	GitLogCommit,
 	GitRevisionReference,
+	IssueOrPullRequest,
+	PullRequest,
 	StatusFileFormatter,
 } from '../../git/git';
 import { GitUri } from '../../git/gitUri';
 import { StashesView } from '../stashesView';
+import { Promises } from '../../system';
 import { View } from '../viewBase';
 import { ContextValues, ViewNode, ViewRefFileNode } from './viewNode';
 
@@ -113,7 +116,13 @@ export class CommitFileNode extends ViewRefFileNode {
 		if (!this.commit.isUncommitted) {
 			return `${ContextValues.File}+committed${
 				this._options.branch?.current && this._options.branch.sha === this.commit.ref ? '+HEAD' : ''
-			}${this._options.unpublished ? '+unpublished' : ''}`;
+			}${this._options.unpublished ? '+unpublished' : ''}${
+				this._details == null
+					? '+details'
+					: `${this._details?.autolinkedIssues != null ? '+autolinks' : ''}${
+							this._details?.pr != null ? '+pr' : ''
+					  }`
+			}`;
 		}
 
 		return this.commit.isUncommittedStaged ? `${ContextValues.File}+staged` : `${ContextValues.File}+unstaged`;
@@ -169,7 +178,7 @@ export class CommitFileNode extends ViewRefFileNode {
 			return CommitFormatter.fromTemplate(
 				this.commit.isUncommitted
 					? `\${author} ${GlyphChars.Dash} \${id}\n${status}\n\${ago} (\${date})`
-					: `\${author}\${ (email)} ${GlyphChars.Dash} \${id}${
+					: `\${author}\${ (email)}\${" via "pullRequest} ${GlyphChars.Dash} \${id}${
 							this._options.unpublished ? ' (unpublished)' : ''
 					  }\n${status}\n\${ago} (\${date})\${\n\nmessage}${this.commit.getFormattedDiffStatus({
 							expand: true,
@@ -178,9 +187,12 @@ export class CommitFileNode extends ViewRefFileNode {
 					  })}\${\n\n${GlyphChars.Dash.repeat(2)}\nfootnotes}`,
 				this.commit,
 				{
+					autolinkedIssues: this._details?.autolinkedIssues,
 					dateFormat: Container.config.defaultDateFormat,
-					// messageAutolinks: true,
+					messageAutolinks: true,
 					messageIndent: 4,
+					pullRequestOrRemote: this._details?.pr,
+					remotes: this._details?.remotes,
 				},
 			);
 		}
@@ -222,5 +234,34 @@ export class CommitFileNode extends ViewRefFileNode {
 
 	protected getDescriptionFormat() {
 		return this.view.config.formats.commits.description;
+	}
+
+	private _details:
+		| {
+				autolinkedIssues: Map<string, IssueOrPullRequest | Promises.CancellationError | undefined> | undefined;
+				pr: PullRequest | undefined;
+				remotes: GitRemote[];
+		  }
+		| undefined = undefined;
+
+	async loadDetails() {
+		if (this._details != null || !this._options.displayAsCommit) return;
+
+		const remotes = await Container.git.getRemotes(this.commit.repoPath);
+		const remote = await Container.git.getRemoteWithApiProvider(remotes);
+		if (remote?.provider == null) return;
+
+		const [autolinkedIssues, pr] = await Promise.all([
+			Container.autolinks.getIssueOrPullRequestLinks(this.commit.message, remote),
+			Container.git.getPullRequestForCommit(this.commit.ref, remote.provider),
+		]);
+
+		this._details = {
+			autolinkedIssues: autolinkedIssues,
+			pr: pr,
+			remotes: remotes,
+		};
+
+		void this.triggerChange();
 	}
 }

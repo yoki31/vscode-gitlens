@@ -46,7 +46,7 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 		return CommitFormatter.fromTemplate(
 			this.commit.isUncommitted
 				? `\${author} ${GlyphChars.Dash} \${id}\n\${ago} (\${date})`
-				: `\${author}\${ (email)} ${GlyphChars.Dash} \${id}${
+				: `\${author}\${ (email)}\${" via "pullRequest} ${GlyphChars.Dash} \${id}${
 						this.unpublished ? ' (unpublished)' : ''
 				  }\${ (tips)}\n\${ago} (\${date})\${\n\nmessage}${this.commit.getFormattedDiffStatus({
 						expand: true,
@@ -55,10 +55,13 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 				  })}\${\n\n${GlyphChars.Dash.repeat(2)}\nfootnotes}`,
 			this.commit,
 			{
+				autolinkedIssues: this._details?.autolinkedIssues,
 				dateFormat: Container.config.defaultDateFormat,
 				getBranchAndTagTips: this.getBranchAndTagTips,
-				// messageAutolinks: true,
+				messageAutolinks: true,
 				messageIndent: 4,
+				pullRequestOrRemote: this._details?.pr,
+				remotes: this._details?.remotes,
 			},
 		);
 	}
@@ -112,7 +115,13 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 
 		item.contextValue = `${ContextValues.Commit}${this.branch?.current ? '+current' : ''}${
 			this.branch?.current && this.branch.sha === this.commit.ref ? '+HEAD' : ''
-		}${this.unpublished ? '+unpublished' : ''}`;
+		}${this.unpublished ? '+unpublished' : ''}${
+			this._details == null
+				? '+details'
+				: `${this._details?.autolinkedIssues != null ? '+autolinks' : ''}${
+						this._details?.pr != null ? '+pr' : ''
+				  }`
+		}`;
 
 		item.description = CommitFormatter.fromTemplate(this.view.config.formats.commits.description, this.commit, {
 			dateFormat: Container.config.defaultDateFormat,
@@ -143,5 +152,38 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 			command: Commands.DiffWithPrevious,
 			arguments: [undefined, commandArgs],
 		};
+	}
+
+	private _details:
+		| {
+				autolinkedIssues: Map<string, IssueOrPullRequest | Promises.CancellationError | undefined> | undefined;
+				pr: PullRequest | undefined;
+				remotes: GitRemote[];
+		  }
+		| undefined = undefined;
+
+	async loadDetails() {
+		if (this._details != null) return;
+
+		const remotes = await Container.git.getRemotes(this.commit.repoPath);
+		const remote = await Container.git.getRemoteWithApiProvider(remotes);
+		if (remote?.provider == null) return;
+
+		const [autolinkedIssues, pr] = await Promise.all([
+			Container.autolinks.getIssueOrPullRequestLinks(this.commit.message, remote),
+			Container.git.getPullRequestForCommit(this.commit.ref, remote.provider),
+		]);
+
+		this._details = {
+			autolinkedIssues: autolinkedIssues,
+			pr: pr,
+			remotes: remotes,
+		};
+
+		// TODO@eamodio
+		// Add autolinks action to open a quickpick to pick the autolink
+		// Add pr action to open the pr
+
+		void this.triggerChange();
 	}
 }

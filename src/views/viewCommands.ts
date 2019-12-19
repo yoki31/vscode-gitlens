@@ -144,6 +144,7 @@ export class ViewCommands {
 		commands.registerCommand('gitlens.views.applyChanges', this.applyChanges, this);
 		commands.registerCommand('gitlens.views.highlightChanges', this.highlightChanges, this);
 		commands.registerCommand('gitlens.views.highlightRevisionChanges', this.highlightRevisionChanges, this);
+		commands.registerCommand('gitlens.views.loadDetailsFromRemote', this.loadDetailsFromRemote, this);
 		commands.registerCommand('gitlens.views.restore', this.restore, this);
 		commands.registerCommand('gitlens.views.switchToBranch', this.switch, this);
 		commands.registerCommand('gitlens.views.switchToAnotherBranch', this.switch, this);
@@ -337,6 +338,13 @@ export class ViewCommands {
 			node.ref.ref,
 			true,
 		));
+	}
+
+	@debug()
+	private loadDetailsFromRemote(node: CommitNode | CommitFileNode) {
+		if (!(node instanceof CommitNode) && !(node instanceof CommitFileNode)) return;
+
+		void node.loadDetails();
 	}
 
 	@debug()
