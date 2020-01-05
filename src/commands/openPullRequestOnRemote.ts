@@ -1,6 +1,13 @@
 'use strict';
 import { env, Uri, window } from 'vscode';
-import { Command, command, CommandContext, Commands } from './common';
+import {
+	Command,
+	command,
+	CommandContext,
+	Commands,
+	isCommandContextViewNodeHasCommit,
+	isCommandContextViewNodeHasFileCommit,
+} from './common';
 import { Container } from '../container';
 import { PullRequestNode } from '../views/nodes';
 import { Logger } from '../logger';
@@ -20,7 +27,9 @@ export class OpenPullRequestOnRemoteCommand extends Command {
 	}
 
 	protected preExecute(context: CommandContext, args?: OpenPullRequestOnRemoteCommandArgs) {
-		if (context.type === 'viewItem' && context.node instanceof PullRequestNode) {
+		if (isCommandContextViewNodeHasCommit(context) || isCommandContextViewNodeHasFileCommit(context)) {
+			args = { ...args, ref: context.node.commit.sha, repoPath: context.node.commit.repoPath };
+		} else if (context.type === 'viewItem' && context.node instanceof PullRequestNode) {
 			args = {
 				...args,
 				pr: { url: context.node.pullRequest.url },
