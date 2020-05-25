@@ -1,16 +1,25 @@
 'use strict';
 import * as paths from 'path';
-import { Command, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
+import { Command, MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
 import { Commands, DiffWithPreviousCommandArgs } from '../../commands';
 import { CommitFileNode } from './commitFileNode';
 import { ViewFilesLayout } from '../../configuration';
 import { GlyphChars } from '../../constants';
 import { Container } from '../../container';
 import { FileNode, FolderNode } from './folderNode';
-import { CommitFormatter, GitBranch, GitLogCommit, GitRevisionReference } from '../../git/git';
+import {
+	CommitFormatter,
+	GitBranch,
+	GitLogCommit,
+	GitRemote,
+	GitRevisionReference,
+	IssueOrPullRequest,
+	PullRequest,
+	RemoteProvider,
+} from '../../git/git';
 import { PullRequestNode } from './pullRequestNode';
 import { StashesView } from '../stashesView';
-import { Arrays, Strings } from '../../system';
+import { Arrays, debug, gate, Promises, Strings } from '../../system';
 import { ViewsWithFiles } from '../viewBase';
 import { ContextValues, ViewNode, ViewRefNode } from './viewNode';
 import { TagsView } from '../tagsView';
@@ -40,30 +49,6 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 
 	get ref(): GitRevisionReference {
 		return this.commit;
-	}
-
-	private get tooltip() {
-		return CommitFormatter.fromTemplate(
-			this.commit.isUncommitted
-				? `\${author} ${GlyphChars.Dash} \${id}\n\${ago} (\${date})`
-				: `\${author}\${ (email)}\${" via "pullRequest} ${GlyphChars.Dash} \${id}${
-						this.unpublished ? ' (unpublished)' : ''
-				  }\${ (tips)}\n\${ago} (\${date})\${\n\nmessage}${this.commit.getFormattedDiffStatus({
-						expand: true,
-						prefix: '\n\n',
-						separator: '\n',
-				  })}\${\n\n${GlyphChars.Dash.repeat(2)}\nfootnotes}`,
-			this.commit,
-			{
-				autolinkedIssues: this._details?.autolinkedIssues,
-				dateFormat: Container.config.defaultDateFormat,
-				getBranchAndTagTips: this.getBranchAndTagTips,
-				messageAutolinks: true,
-				messageIndent: 4,
-				pullRequestOrRemote: this._details?.pr,
-				remotes: this._details?.remotes,
-			},
-		);
 	}
 
 	async getChildren(): Promise<ViewNode[]> {
@@ -118,7 +103,7 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 		}${this.unpublished ? '+unpublished' : ''}${
 			this._details == null
 				? '+details'
-				: `${this._details?.autolinkedIssues != null ? '+autolinks' : ''}${
+				: `${this._details?.autolinkedIssuesOrPullRequests != null ? '+autolinks' : ''}${
 						this._details?.pr != null ? '+pr' : ''
 				  }`
 		}`;
@@ -132,7 +117,10 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 			: !(this.view instanceof StashesView) && this.view.config.avatars
 			? await this.commit.getAvatarUri({ defaultStyle: Container.config.defaultGravatarsStyle })
 			: new ThemeIcon('git-commit');
-		item.tooltip = this.tooltip;
+
+		if (this._details != null) {
+			item.tooltip = (await this.getTooltip()) as any;
+		}
 
 		return item;
 	}
@@ -154,11 +142,24 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 		};
 	}
 
+	async resolveTreeItem(item: TreeItem): Promise<TreeItem> {
+		if (item.tooltip == null) {
+			if (this._details == null) {
+				await this.loadDetails();
+			}
+
+			item.tooltip = (await this.getTooltip()) as any;
+		}
+		return item;
+	}
+
 	private _details:
 		| {
-				autolinkedIssues: Map<string, IssueOrPullRequest | Promises.CancellationError | undefined> | undefined;
+				autolinkedIssuesOrPullRequests:
+					| Map<string, IssueOrPullRequest | Promises.CancellationError | undefined>
+					| undefined;
 				pr: PullRequest | undefined;
-				remotes: GitRemote[];
+				remotes: GitRemote<RemoteProvider>[];
 		  }
 		| undefined = undefined;
 
@@ -166,16 +167,16 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 		if (this._details != null) return;
 
 		const remotes = await Container.git.getRemotes(this.commit.repoPath);
-		const remote = await Container.git.getRemoteWithApiProvider(remotes);
+		const remote = await Container.git.getRichRemoteProvider(remotes);
 		if (remote?.provider == null) return;
 
-		const [autolinkedIssues, pr] = await Promise.all([
+		const [autolinkedIssuesOrPullRequests, pr] = await Promise.all([
 			Container.autolinks.getIssueOrPullRequestLinks(this.commit.message, remote),
 			Container.git.getPullRequestForCommit(this.commit.ref, remote.provider),
 		]);
 
 		this._details = {
-			autolinkedIssues: autolinkedIssues,
+			autolinkedIssuesOrPullRequests: autolinkedIssuesOrPullRequests,
 			pr: pr,
 			remotes: remotes,
 		};
@@ -184,6 +185,45 @@ export class CommitNode extends ViewRefNode<ViewsWithFiles, GitRevisionReference
 		// Add autolinks action to open a quickpick to pick the autolink
 		// Add pr action to open the pr
 
-		void this.triggerChange();
+		setTimeout(() => void this.triggerChange(), 50);
+	}
+
+	@gate()
+	@debug()
+	refresh(reset?: boolean) {
+		if (reset) {
+			this._details = undefined;
+		}
+	}
+
+	private async getTooltip() {
+		const tooltip = await CommitFormatter.fromTemplateAsync(
+			Container.config.hovers.detailsMarkdownFormat,
+			// this.commit.isUncommitted
+			// 	? `\${author} ${GlyphChars.Dash} \${id}\n\${ago} (\${date})`
+			// 	: `\${author}\${ (email)}\${" via "pullRequest} ${GlyphChars.Dash} \${id}${
+			// 			this.unpublished ? ' (unpublished)' : ''
+			// 	  }\${ (tips)}\n\${ago} (\${date})\${\n\nmessage}${this.commit.getFormattedDiffStatus({
+			// 			expand: true,
+			// 			prefix: '\n\n',
+			// 			separator: '\n',
+			// 	  })}\${\n\n${GlyphChars.Dash.repeat(2)}\nfootnotes}`,
+			this.commit,
+			{
+				autolinkedIssuesOrPullRequests: this._details?.autolinkedIssuesOrPullRequests,
+				dateFormat: Container.config.defaultDateFormat,
+				getBranchAndTagTips: this.getBranchAndTagTips,
+				markdown: true,
+				messageAutolinks: true,
+				messageIndent: 4,
+				pullRequestOrRemote: this._details?.pr,
+				remotes: this._details?.remotes,
+			},
+		);
+
+		const markdown = new MarkdownString(tooltip, true);
+		markdown.isTrusted = true;
+
+		return markdown;
 	}
 }

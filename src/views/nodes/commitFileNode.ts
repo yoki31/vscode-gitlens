@@ -1,6 +1,6 @@
 'use strict';
 import * as paths from 'path';
-import { Command, Selection, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
+import { Command, MarkdownString, Selection, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
 import { Commands, DiffWithPreviousCommandArgs } from '../../commands';
 import { GlyphChars } from '../../constants';
 import { Container } from '../../container';
@@ -9,14 +9,16 @@ import {
 	GitBranch,
 	GitFile,
 	GitLogCommit,
+	GitRemote,
 	GitRevisionReference,
 	IssueOrPullRequest,
 	PullRequest,
+	RemoteProvider,
 	StatusFileFormatter,
 } from '../../git/git';
 import { GitUri } from '../../git/gitUri';
 import { StashesView } from '../stashesView';
-import { Promises } from '../../system';
+import { debug, gate, Promises } from '../../system';
 import { View } from '../viewBase';
 import { ContextValues, ViewNode, ViewRefFileNode } from './viewNode';
 
@@ -86,7 +88,6 @@ export class CommitFileNode extends ViewRefFileNode {
 		const item = new TreeItem(this.label, TreeItemCollapsibleState.None);
 		item.contextValue = this.contextValue;
 		item.description = this.description;
-		item.tooltip = this.tooltip;
 
 		if (this._options.displayAsCommit) {
 			if (!this.commit.isUncommitted && !(this.view instanceof StashesView) && this.view.config.avatars) {
@@ -94,6 +95,16 @@ export class CommitFileNode extends ViewRefFileNode {
 					? new ThemeIcon('arrow-up', new ThemeColor('gitlens.viewCommitToPushIconColor'))
 					: await this.commit.getAvatarUri({ defaultStyle: Container.config.defaultGravatarsStyle });
 			}
+
+			if (this._details != null) {
+				item.tooltip = (await this.getCommitTooltip()) as any;
+			}
+		} else {
+			item.tooltip = StatusFileFormatter.fromTemplate(
+				// eslint-disable-next-line no-template-curly-in-string
+				'${file}\n${directory}/\n\n${status}${ (originalPath)}',
+				this.file,
+			);
 		}
 
 		if (item.iconPath == null) {
@@ -119,13 +130,24 @@ export class CommitFileNode extends ViewRefFileNode {
 			}${this._options.unpublished ? '+unpublished' : ''}${
 				this._details == null
 					? '+details'
-					: `${this._details?.autolinkedIssues != null ? '+autolinks' : ''}${
+					: `${this._details?.autolinkedIssuesOrPullRequests != null ? '+autolinks' : ''}${
 							this._details?.pr != null ? '+pr' : ''
 					  }`
 			}`;
 		}
 
 		return this.commit.isUncommittedStaged ? `${ContextValues.File}+staged` : `${ContextValues.File}+unstaged`;
+	}
+
+	async resolveTreeItem(item: TreeItem): Promise<TreeItem> {
+		if (item.tooltip == null && this._options.displayAsCommit) {
+			if (this._details == null) {
+				await this.loadDetails();
+			}
+
+			item.tooltip = (await this.getCommitTooltip()) as any;
+		}
+		return item;
 	}
 
 	private get description() {
@@ -171,39 +193,6 @@ export class CommitFileNode extends ViewRefFileNode {
 		this._label = undefined;
 	}
 
-	private get tooltip() {
-		if (this._options.displayAsCommit) {
-			// eslint-disable-next-line no-template-curly-in-string
-			const status = StatusFileFormatter.fromTemplate('${status}${ (originalPath)}', this.file); // lgtm [js/template-syntax-in-string-literal]
-			return CommitFormatter.fromTemplate(
-				this.commit.isUncommitted
-					? `\${author} ${GlyphChars.Dash} \${id}\n${status}\n\${ago} (\${date})`
-					: `\${author}\${ (email)}\${" via "pullRequest} ${GlyphChars.Dash} \${id}${
-							this._options.unpublished ? ' (unpublished)' : ''
-					  }\n${status}\n\${ago} (\${date})\${\n\nmessage}${this.commit.getFormattedDiffStatus({
-							expand: true,
-							prefix: '\n\n',
-							separator: '\n',
-					  })}\${\n\n${GlyphChars.Dash.repeat(2)}\nfootnotes}`,
-				this.commit,
-				{
-					autolinkedIssues: this._details?.autolinkedIssues,
-					dateFormat: Container.config.defaultDateFormat,
-					messageAutolinks: true,
-					messageIndent: 4,
-					pullRequestOrRemote: this._details?.pr,
-					remotes: this._details?.remotes,
-				},
-			);
-		}
-
-		return StatusFileFormatter.fromTemplate(
-			// eslint-disable-next-line no-template-curly-in-string
-			'${file}\n${directory}/\n\n${status}${ (originalPath)}',
-			this.file,
-		);
-	}
-
 	getCommand(): Command | undefined {
 		let line;
 		if (this.commit.line !== undefined) {
@@ -238,9 +227,11 @@ export class CommitFileNode extends ViewRefFileNode {
 
 	private _details:
 		| {
-				autolinkedIssues: Map<string, IssueOrPullRequest | Promises.CancellationError | undefined> | undefined;
+				autolinkedIssuesOrPullRequests:
+					| Map<string, IssueOrPullRequest | Promises.CancellationError | undefined>
+					| undefined;
 				pr: PullRequest | undefined;
-				remotes: GitRemote[];
+				remotes: GitRemote<RemoteProvider>[];
 		  }
 		| undefined = undefined;
 
@@ -248,20 +239,60 @@ export class CommitFileNode extends ViewRefFileNode {
 		if (this._details != null || !this._options.displayAsCommit) return;
 
 		const remotes = await Container.git.getRemotes(this.commit.repoPath);
-		const remote = await Container.git.getRemoteWithApiProvider(remotes);
+		const remote = await Container.git.getRichRemoteProvider(remotes);
 		if (remote?.provider == null) return;
 
-		const [autolinkedIssues, pr] = await Promise.all([
+		const [autolinkedIssuesOrPullRequests, pr] = await Promise.all([
 			Container.autolinks.getIssueOrPullRequestLinks(this.commit.message, remote),
 			Container.git.getPullRequestForCommit(this.commit.ref, remote.provider),
 		]);
 
 		this._details = {
-			autolinkedIssues: autolinkedIssues,
+			autolinkedIssuesOrPullRequests: autolinkedIssuesOrPullRequests,
 			pr: pr,
 			remotes: remotes,
 		};
 
-		void this.triggerChange();
+		setTimeout(() => void this.triggerChange(), 50);
+	}
+
+	@gate()
+	@debug()
+	refresh(reset?: boolean) {
+		if (reset) {
+			this._details = undefined;
+		}
+	}
+
+	private async getCommitTooltip() {
+		// // eslint-disable-next-line no-template-curly-in-string
+		// const status = StatusFileFormatter.fromTemplate('${status}${ (originalPath)}', this.file); // lgtm [js/template-syntax-in-string-literal]
+		const tooltip = await CommitFormatter.fromTemplateAsync(
+			Container.config.hovers.detailsMarkdownFormat,
+			// this.commit.isUncommitted
+			// 	? `\${author} ${GlyphChars.Dash} \${id}\n${status}\n\${ago} (\${date})`
+			// 	: `\${author}\${ (email)}\${" via "pullRequest} ${GlyphChars.Dash} \${id}${
+			// 			this._options.unpublished ? ' (unpublished)' : ''
+			// 	  }\n${status}\n\${ago} (\${date})\${\n\nmessage}${this.commit.getFormattedDiffStatus({
+			// 			expand: true,
+			// 			prefix: '\n\n',
+			// 			separator: '\n',
+			// 	  })}\${\n\n${GlyphChars.Dash.repeat(2)}\nfootnotes}`,
+			this.commit,
+			{
+				autolinkedIssuesOrPullRequests: this._details?.autolinkedIssuesOrPullRequests,
+				dateFormat: Container.config.defaultDateFormat,
+				messageAutolinks: true,
+				messageIndent: 4,
+				pullRequestOrRemote: this._details?.pr,
+				remotes: this._details?.remotes,
+				markdown: true,
+			},
+		);
+
+		const markdown = new MarkdownString(tooltip, true);
+		markdown.isTrusted = true;
+
+		return markdown;
 	}
 }

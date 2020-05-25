@@ -114,16 +114,16 @@ export abstract class ViewBase<
 			this.getTreeItem = async function (this: ViewBase<RootNode, ViewConfig>, node: ViewNode) {
 				const item = await getTreeItem.apply(this, [node]);
 
-				const parent = node.getParent();
-				if (parent != null) {
-					item.tooltip = `${
-						item.tooltip ?? item.label
-					}\n\nDBG:\nnode: ${node.toString()}\nparent: ${parent.toString()}\ncontext: ${item.contextValue}`;
-				} else {
-					item.tooltip = `${item.tooltip ?? item.label}\n\nDBG:\nnode: ${node.toString()}\ncontext: ${
-						item.contextValue
-					}`;
-				}
+				// const parent = node.getParent();
+				// if (parent != null) {
+				// 	item.tooltip = `${
+				// 		item.tooltip ?? item.label
+				// 	}\n\nDBG:\nnode: ${node.toString()}\nparent: ${parent.toString()}\ncontext: ${item.contextValue}`;
+				// } else {
+				// 	item.tooltip = `${item.tooltip ?? item.label}\n\nDBG:\nnode: ${node.toString()}\ncontext: ${
+				// 		item.contextValue
+				// 	}`;
+				// }
 				return item;
 			};
 		}
@@ -248,6 +248,10 @@ export abstract class ViewBase<
 
 	getTreeItem(node: ViewNode): TreeItem | Promise<TreeItem> {
 		return node.getTreeItem();
+	}
+
+	resolveTreeItem(item: TreeItem, node: ViewNode): TreeItem | Promise<TreeItem> {
+		return node.resolveTreeItem(item);
 	}
 
 	protected onElementCollapsed(e: TreeViewExpansionEvent<ViewNode>) {
