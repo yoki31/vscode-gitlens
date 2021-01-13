@@ -52,6 +52,21 @@ header {
 	}
 }
 
+h3#actions-status {
+	margin: 0 1em 0 0;
+	align-self: center;
+
+	&[class^='icon--'],
+	&[class*=' icon--'] {
+		&::before {
+			color: var(--vscode-list-warningForeground);
+			font-size: 1.6em;
+			top: 8px;
+			line-height: 0.7em;
+		}
+	}
+}
+
 h4 {
 	font-size: 1.5rem;
 	opacity: 0.8;
@@ -260,6 +275,75 @@ $entry-padding: 5px;
 		.vscode-light & {
 			background: rgba(0, 0, 0, 0.1);
 			box-shadow: 0px -1px 0px 0px rgba(0, 0, 0, 0.2);
+		}
+	}
+
+	&.entry--paused-at {
+		box-shadow: 0 0 0 1px var(--color-highlight);
+		margin-top: 5px;
+
+		&:focus-within {
+			outline: none;
+			border: 2px solid var(--color-highlight--50);
+		}
+
+		&::before {
+			content: '\ead1';
+			color: var(--vscode-list-warningForeground);
+			font-family: codicon;
+			font-size: 1.4em;
+			position: absolute;
+			left: -44px;
+			margin-top: 2px;
+		}
+
+		.has-conflicts &::before {
+			content: '\ea6c';
+			left: -46px;
+		}
+
+		&.entry--squash-to,
+		&.entry--edit,
+		&.entry--reword,
+		&.entry--squash,
+		&.entry--fixup,
+		&.entry--drop {
+			&::before {
+				display: inline-flex;
+				align-items: center;
+				left: -27px;
+				padding-right: 9px;
+				// height: 37px;
+				height: 47px;
+			}
+		}
+
+		& .entry-indicator {
+			&::before {
+				content: '\eab6';
+				color: var(--color-highlight);
+				font-family: codicon;
+				font-size: 1.7em;
+				font-weight: 600;
+				line-height: 0.8em;
+				top: 4px;
+				left: 1px;
+				position: relative;
+				margin-right: -6px;
+			}
+		}
+
+		& > .entry-action {
+			&::after {
+				opacity: 0.3;
+			}
+
+			& > select[disabled] {
+				color: var(--color-foreground);
+				opacity: 1;
+				border: 1px solid rgba(255, 255, 255, 0.2) !important;
+				outline-color: rgba(255, 255, 255, 0.2) !important;
+			}
 		}
 	}
 

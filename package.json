@@ -2951,6 +2951,12 @@
 				"category": "GitLens"
 			},
 			{
+				"command": "gitlens.views.openRebaseEditor",
+				"title": "Open Interactive Rebase Editor",
+				"category": "GitLens",
+				"icon": "$(open-preview)"
+			},
+			{
 				"command": "gitlens.toggleFileBlame",
 				"title": "Toggle File Blame",
 				"category": "GitLens",
@@ -4901,6 +4907,10 @@
 				{
 					"command": "gitlens.enableRebaseEditor",
 					"when": "gitlens:enabled"
+				},
+				{
+					"command": "gitlens.views.openRebaseEditor",
+					"when": "false"
 				},
 				{
 					"command": "gitlens.externalDiff",
@@ -7528,6 +7538,16 @@
 					"when": "viewItem =~ /gitlens:pullrequest\\b/",
 					"group": "inline@99",
 					"alt": "gitlens.copyRemotePullRequestUrl"
+				},
+				{
+					"command": "gitlens.views.openRebaseEditor",
+					"when": "!gitlens:readonly && viewItem =~ /gitlens:rebase\\b/",
+					"group": "inline@10"
+				},
+				{
+					"command": "gitlens.views.openRebaseEditor",
+					"when": "!gitlens:readonly && viewItem =~ /gitlens:rebase\\b/",
+					"group": "1_gitlens_actions@1"
 				},
 				{
 					"command": "gitlens.views.addRemote",

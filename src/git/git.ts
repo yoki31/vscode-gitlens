@@ -1023,6 +1023,18 @@ export namespace Git {
 		return git<string>({ cwd: repoPath }, ...params, ref1, ref2);
 	}
 
+	export function rebase__abort(repoPath: string) {
+		return git<string>({ cwd: repoPath }, 'rebase', '--abort');
+	}
+
+	export function rebase__continue(repoPath: string) {
+		return git<string>({ cwd: repoPath }, 'rebase', '--continue');
+	}
+
+	export function rebase__editTodo(repoPath: string) {
+		return git<string>({ cwd: repoPath }, 'rebase', '--edit-todo');
+	}
+
 	export function reflog(
 		repoPath: string,
 		{ all, branch, limit, skip }: { all?: boolean; branch?: string; limit?: number; skip?: number } = {},

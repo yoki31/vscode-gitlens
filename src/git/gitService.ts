@@ -3791,6 +3791,42 @@ export class GitService implements Disposable {
 		return Git.difftool__dir_diff(repoPath, tool, ref1, ref2);
 	}
 
+	@gate()
+	@log()
+	async rebaseAbort(repoPath: string) {
+		const cc = Logger.getCorrelationContext();
+
+		try {
+			await Git.rebase__abort(repoPath);
+		} catch (ex) {
+			Logger.error(ex, cc);
+		}
+	}
+
+	@gate()
+	@log()
+	async rebaseContinue(repoPath: string) {
+		const cc = Logger.getCorrelationContext();
+
+		try {
+			await Git.rebase__continue(repoPath);
+		} catch (ex) {
+			Logger.error(ex, cc);
+		}
+	}
+
+	@gate()
+	@log()
+	async rebaseEditTodo(repoPath: string) {
+		const cc = Logger.getCorrelationContext();
+
+		try {
+			await Git.rebase__editTodo(repoPath);
+		} catch (ex) {
+			Logger.error(ex, cc);
+		}
+	}
+
 	async resolveReference(
 		repoPath: string,
 		ref: string,

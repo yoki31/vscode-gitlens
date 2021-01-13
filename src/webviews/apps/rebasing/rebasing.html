@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<style nonce="Z2l0bGVucy1ib290c3RyYXA=">
+			@font-face {
+				font-family: 'codicon';
+				src: url('#{root}/dist/webviews/codicon.ttf?669d352dfabff8f6eaa466c8ae820e43') format('truetype');
+			}
+		</style>
+	</head>
+
+	<body class="preload">
+		<!-- <canvas class="snow"></canvas> -->
+
+		<div class="container">
+			<header>
+				<h2>GitLens Interactive Rebase</h2>
+				<h4 id="subhead"></h4>
+				<h4 id="subhead-status"></h4>
+			</header>
+			<ul id="entries" class="entries"></ul>
+			<div class="shortcuts">
+				<span class="shortcut"><kbd>p</kbd><span>Pick</span></span>
+				<span class="shortcut"><kbd>r</kbd><span>Reword</span></span>
+				<span class="shortcut"><kbd>e</kbd><span>Edit</span></span>
+				<span class="shortcut"><kbd>s</kbd><span>Squash</span></span>
+				<span class="shortcut"><kbd>d</kbd><span>Drop</span></span>
+				<span class="shortcut"><kbd>alt ↑</kbd><span>Move Up</span></span>
+				<span class="shortcut"><kbd>alt ↓</kbd><span>Move Down</span></span>
+			</div>
+			<div class="actions">
+				<div class="actions--left">
+					<!--
+					<div class="snow__trigger-container">
+						<img
+							class="snow__trigger snow__trigger--centered"
+							title="Let it snow — Happy Holidays!"
+							alt="Let it snow — Happy Holidays!"
+							src="#{root}/images/snowman.png"
+						/>
+					</div>
+					-->
+					<h3 id="actions-status"></h3>
+				</div>
+				<div class="actions--right">
+					<button name="continue" class="button button--flat-primary button--right" data-action="continue">
+						Continue Rebase <span class="shortcut">Ctrl+Enter</span>
+					</button>
+					<button name="abort" class="button button--flat-secondary" data-action="abort">
+						Abort <span class="shortcut">Ctrl+A</span>
+					</button>
+				</div>
+			</div>
+		</div>
+		#{endOfBody}
+	</body>
+</html>

@@ -121,6 +121,7 @@ export interface RebaseEntry {
 	readonly ref: string;
 	readonly message: string;
 	readonly index: number;
+	readonly done?: boolean;
 }
 
 export interface RebaseDidChangeNotificationParams {
@@ -131,6 +132,8 @@ export const RebaseDidChangeNotificationType = new IpcNotificationType<RebaseDid
 );
 
 export const RebaseDidAbortCommandType = new IpcCommandType('rebase/abort');
+
+export const RebaseDidContinueCommandType = new IpcCommandType('rebase/continue');
 
 export const RebaseDidDisableCommandType = new IpcCommandType('rebase/disable');
 
@@ -162,5 +165,15 @@ export interface RebaseState {
 	commits: Commit[];
 	commands: {
 		commit: string;
+	};
+
+	rebasing?: {
+		current: string | undefined;
+		incoming: string;
+		conflicts: number;
+		steps: {
+			current: { number: number; commit: string };
+			total: number;
+		};
 	};
 }

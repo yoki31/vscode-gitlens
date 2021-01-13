@@ -270,6 +270,34 @@ function getWebviewsConfig(mode, _env) {
 					: false,
 		}),
 		new HtmlPlugin({
+			template: 'rebasing/rebasing.html',
+			chunks: ['rebasing'],
+			filename: path.join(__dirname, 'dist', 'webviews', 'rebasing.html'),
+			inject: true,
+			inlineSource: mode === 'production' ? '.css$' : undefined,
+			cspPlugin: {
+				enabled: true,
+				policy: cspPolicy,
+				nonceEnabled: {
+					'script-src': true,
+					'style-src': true,
+				},
+			},
+			minify:
+				mode === 'production'
+					? {
+							removeComments: true,
+							collapseWhitespace: true,
+							removeRedundantAttributes: false,
+							useShortDoctype: true,
+							removeEmptyAttributes: true,
+							removeStyleLinkTypeAttributes: true,
+							keepClosingSlash: true,
+							minifyCSS: true,
+					  }
+					: false,
+		}),
+		new HtmlPlugin({
 			template: 'settings/settings.html',
 			chunks: ['settings'],
 			filename: path.join(__dirname, 'dist', 'webviews', 'settings.html'),
@@ -372,6 +400,7 @@ function getWebviewsConfig(mode, _env) {
 		context: basePath,
 		entry: {
 			rebase: './rebase/rebase.ts',
+			rebasing: './rebasing/rebasing.ts',
 			settings: './settings/settings.ts',
 			welcome: './welcome/welcome.ts',
 		},
