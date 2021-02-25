@@ -7,7 +7,11 @@
 			"type": "pwa-extensionHost",
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
-			"args": ["--disable-extension=eamodio.gitlens-insiders", "--extensionDevelopmentPath=${workspaceFolder}"],
+			"args": [
+				"--disable-extension=eamodio.gitlens-insiders",
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"--enable-proposed-api eamodio.gitlens"
+			],
 			"cwd": "${workspaceFolder}",
 			"debugWebviews": true,
 			"rendererDebugOptions": {
@@ -30,7 +34,11 @@
 			"type": "pwa-extensionHost",
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
-			"args": ["--disable-extensions", "--extensionDevelopmentPath=${workspaceFolder}"],
+			"args": [
+				"--disable-extensions",
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"--enable-proposed-api eamodio.gitlens"
+			],
 			"cwd": "${workspaceFolder}",
 			"debugWebviews": true,
 			"rendererDebugOptions": {
@@ -53,7 +61,11 @@
 			"type": "pwa-extensionHost",
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
-			"args": ["--disable-extension=eamodio.gitlens-insiders", "--extensionDevelopmentPath=${workspaceFolder}"],
+			"args": [
+				"--disable-extension=eamodio.gitlens-insiders",
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"--enabled-proposed-api"
+			],
 			"cwd": "${workspaceFolder}",
 			"debugWebviews": true,
 			"rendererDebugOptions": {
@@ -77,7 +89,11 @@
 			"type": "pwa-extensionHost",
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
-			"args": ["--disable-extensions", "--extensionDevelopmentPath=${workspaceFolder}"],
+			"args": [
+				"--disable-extensions",
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"--enable-proposed-api eamodio.gitlens"
+			],
 			"cwd": "${workspaceFolder}",
 			"debugWebviews": true,
 			"rendererDebugOptions": {

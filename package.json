@@ -20,6 +20,7 @@
 	"engines": {
 		"vscode": "^1.54.0-insiders"
 	},
+	"enableProposedApi": true,
 	"main": "./dist/gitlens",
 	"icon": "images/gitlens-icon.png",
 	"preview": false,
@@ -2992,58 +2993,40 @@
 				"command": "gitlens.diffWithNext",
 				"title": "Open Changes with Next Revision",
 				"category": "GitLens",
-				"icon": {
-					"dark": "images/dark/icon-next-commit.svg",
-					"light": "images/light/icon-next-commit.svg"
-				},
+				"icon": "$(gitlens-next-commit)",
 				"enablement": "gitlens:activeFileStatus =~ /revision/"
 			},
 			{
 				"command": "gitlens.diffWithNextInDiffLeft",
 				"title": "Open Changes with Next Revision",
 				"category": "GitLens",
-				"icon": {
-					"dark": "images/dark/icon-next-commit.svg",
-					"light": "images/light/icon-next-commit.svg"
-				},
+				"icon": "$(gitlens-next-commit)",
 				"enablement": "gitlens:activeFileStatus =~ /revision/"
 			},
 			{
 				"command": "gitlens.diffWithNextInDiffRight",
 				"title": "Open Changes with Next Revision",
 				"category": "GitLens",
-				"icon": {
-					"dark": "images/dark/icon-next-commit.svg",
-					"light": "images/light/icon-next-commit.svg"
-				},
+				"icon": "$(gitlens-next-commit)",
 				"enablement": "gitlens:activeFileStatus =~ /revision/"
 			},
 			{
 				"command": "gitlens.diffWithPrevious",
 				"title": "Open Changes with Previous Revision",
 				"category": "GitLens",
-				"icon": {
-					"dark": "images/dark/icon-prev-commit.svg",
-					"light": "images/light/icon-prev-commit.svg"
-				}
+				"icon": "$(gitlens-prev-commit)"
 			},
 			{
 				"command": "gitlens.diffWithPreviousInDiffLeft",
 				"title": "Open Changes with Previous Revision",
 				"category": "GitLens",
-				"icon": {
-					"dark": "images/dark/icon-prev-commit.svg",
-					"light": "images/light/icon-prev-commit.svg"
-				}
+				"icon": "$(gitlens-prev-commit)"
 			},
 			{
 				"command": "gitlens.diffWithPreviousInDiffRight",
 				"title": "Open Changes with Previous Revision",
 				"category": "GitLens",
-				"icon": {
-					"dark": "images/dark/icon-prev-commit.svg",
-					"light": "images/light/icon-prev-commit.svg"
-				}
+				"icon": "$(gitlens-prev-commit)"
 			},
 			{
 				"command": "gitlens.diffLineWithPrevious",
@@ -4880,6 +4863,507 @@
 				"command": "gitlens.views.tags.setShowAvatarsOff",
 				"title": "Hide Avatars",
 				"category": "GitLens"
+			}
+		],
+		"icons": [
+			{
+				"id": "gitlens-activity",
+				"description": "gitlens-activity icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e000"
+				}
+			},
+			{
+				"id": "gitlens-bitbucket",
+				"description": "gitlens-bitbucket icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e001"
+				}
+			},
+			{
+				"id": "gitlens-branch-green",
+				"description": "gitlens-branch-green icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e002"
+				}
+			},
+			{
+				"id": "gitlens-branch-red",
+				"description": "gitlens-branch-red icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e003"
+				}
+			},
+			{
+				"id": "gitlens-branch-yellow",
+				"description": "gitlens-branch-yellow icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e004"
+				}
+			},
+			{
+				"id": "gitlens-branch",
+				"description": "gitlens-branch icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e005"
+				}
+			},
+			{
+				"id": "gitlens-check",
+				"description": "gitlens-check icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e006"
+				}
+			},
+			{
+				"id": "gitlens-checkout",
+				"description": "gitlens-checkout icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e007"
+				}
+			},
+			{
+				"id": "gitlens-commit-horizontal",
+				"description": "gitlens-commit-horizontal icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e008"
+				}
+			},
+			{
+				"id": "gitlens-compare-ref-remote",
+				"description": "gitlens-compare-ref-remote icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e009"
+				}
+			},
+			{
+				"id": "gitlens-compare-ref-working",
+				"description": "gitlens-compare-ref-working icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e00a"
+				}
+			},
+			{
+				"id": "gitlens-copy-link",
+				"description": "gitlens-copy-link icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e00b"
+				}
+			},
+			{
+				"id": "gitlens-copy-message",
+				"description": "gitlens-copy-message icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e00c"
+				}
+			},
+			{
+				"id": "gitlens-copy",
+				"description": "gitlens-copy icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e00d"
+				}
+			},
+			{
+				"id": "gitlens-diff",
+				"description": "gitlens-diff icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e00e"
+				}
+			},
+			{
+				"id": "gitlens-git-orange",
+				"description": "gitlens-git-orange icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e00f"
+				}
+			},
+			{
+				"id": "gitlens-git-progress",
+				"description": "gitlens-git-progress icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e010"
+				}
+			},
+			{
+				"id": "gitlens-git",
+				"description": "gitlens-git icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e011"
+				}
+			},
+			{
+				"id": "gitlens-github",
+				"description": "gitlens-github icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e012"
+				}
+			},
+			{
+				"id": "gitlens-gitlab",
+				"description": "gitlens-gitlab icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e013"
+				}
+			},
+			{
+				"id": "gitlens-match-all-selected",
+				"description": "gitlens-match-all-selected icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e014"
+				}
+			},
+			{
+				"id": "gitlens-match-all",
+				"description": "gitlens-match-all icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e015"
+				}
+			},
+			{
+				"id": "gitlens-match-case-selected",
+				"description": "gitlens-match-case-selected icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e016"
+				}
+			},
+			{
+				"id": "gitlens-match-case",
+				"description": "gitlens-match-case icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e017"
+				}
+			},
+			{
+				"id": "gitlens-match-regex-selected",
+				"description": "gitlens-match-regex-selected icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e018"
+				}
+			},
+			{
+				"id": "gitlens-match-regex",
+				"description": "gitlens-match-regex icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e019"
+				}
+			},
+			{
+				"id": "gitlens-next-commit",
+				"description": "gitlens-next-commit icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e01a"
+				}
+			},
+			{
+				"id": "gitlens-no-check",
+				"description": "gitlens-no-check icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e01b"
+				}
+			},
+			{
+				"id": "gitlens-open-revision",
+				"description": "gitlens-open-revision icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e01c"
+				}
+			},
+			{
+				"id": "gitlens-person-add",
+				"description": "gitlens-person-add icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e01d"
+				}
+			},
+			{
+				"id": "gitlens-presence-away",
+				"description": "gitlens-presence-away icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e01e"
+				}
+			},
+			{
+				"id": "gitlens-presence-busy",
+				"description": "gitlens-presence-busy icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e01f"
+				}
+			},
+			{
+				"id": "gitlens-presence-dnd",
+				"description": "gitlens-presence-dnd icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e020"
+				}
+			},
+			{
+				"id": "gitlens-presence-offline",
+				"description": "gitlens-presence-offline icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e021"
+				}
+			},
+			{
+				"id": "gitlens-presence-online",
+				"description": "gitlens-presence-online icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e022"
+				}
+			},
+			{
+				"id": "gitlens-prev-commit-menu",
+				"description": "gitlens-prev-commit-menu icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e023"
+				}
+			},
+			{
+				"id": "gitlens-prev-commit",
+				"description": "gitlens-prev-commit icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e000"
+				}
+			},
+			{
+				"id": "gitlens-push-force",
+				"description": "gitlens-push-force icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e025"
+				}
+			},
+			{
+				"id": "gitlens-remote",
+				"description": "gitlens-remote icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e026"
+				}
+			},
+			{
+				"id": "gitlens-repo-blue",
+				"description": "gitlens-repo-blue icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e027"
+				}
+			},
+			{
+				"id": "gitlens-repo-green",
+				"description": "gitlens-repo-green icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e028"
+				}
+			},
+			{
+				"id": "gitlens-repo-red",
+				"description": "gitlens-repo-red icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e029"
+				}
+			},
+			{
+				"id": "gitlens-repo-yellow",
+				"description": "gitlens-repo-yellow icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e02a"
+				}
+			},
+			{
+				"id": "gitlens-repo",
+				"description": "gitlens-repo icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e02b"
+				}
+			},
+			{
+				"id": "gitlens-stash-pop",
+				"description": "gitlens-stash-pop icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e02c"
+				}
+			},
+			{
+				"id": "gitlens-stash-save",
+				"description": "gitlens-stash-save icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e02d"
+				}
+			},
+			{
+				"id": "gitlens-stash",
+				"description": "gitlens-stash icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e02e"
+				}
+			},
+			{
+				"id": "gitlens-status-added",
+				"description": "gitlens-status-added icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e02f"
+				}
+			},
+			{
+				"id": "gitlens-status-conflict",
+				"description": "gitlens-status-conflict icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e030"
+				}
+			},
+			{
+				"id": "gitlens-status-copied",
+				"description": "gitlens-status-copied icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e031"
+				}
+			},
+			{
+				"id": "gitlens-status-deleted",
+				"description": "gitlens-status-deleted icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e032"
+				}
+			},
+			{
+				"id": "gitlens-status-ignored",
+				"description": "gitlens-status-ignored icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e033"
+				}
+			},
+			{
+				"id": "gitlens-status-modified",
+				"description": "gitlens-status-modified icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e034"
+				}
+			},
+			{
+				"id": "gitlens-status-renamed",
+				"description": "gitlens-status-renamed icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e035"
+				}
+			},
+			{
+				"id": "gitlens-status-unknown",
+				"description": "gitlens-status-unknown icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e036"
+				}
+			},
+			{
+				"id": "gitlens-status-untracked",
+				"description": "gitlens-status-untracked icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e037"
+				}
+			},
+			{
+				"id": "gitlens-swap",
+				"description": "gitlens-swap icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e038"
+				}
+			},
+			{
+				"id": "gitlens-tag-selected",
+				"description": "gitlens-tag-selected icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e039"
+				}
+			},
+			{
+				"id": "gitlens-unfold",
+				"description": "gitlens-unfold icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e03a"
+				}
+			},
+			{
+				"id": "gitlens-unplug",
+				"description": "gitlens-unplug icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e03b"
+				}
+			},
+			{
+				"id": "gitlens-view-auto",
+				"description": "gitlens-view-auto icon",
+				"default": {
+					"fontId": "gitlens-icons",
+					"fontCharacter": "\\e03c"
+				}
+			}
+		],
+		"iconFonts": [
+			{
+				"id": "gitlens-icons",
+				"src": [
+					{
+						"path": "./vscode-10.woff",
+						"format": "woff"
+					}
+				]
 			}
 		],
 		"menus": {
@@ -9161,6 +9645,8 @@
 		"build": "webpack --mode development",
 		"build:extension": "webpack --mode development --config-name extension",
 		"build:webviews": "webpack --mode development --config-name webviews",
+		"build:icons": "yarn fantasticon",
+		"build:font": "yarn svgtofont --sources ./images/icons --output ./dist --fontName gitlens-icons --startUnicode 0xe000  ",
 		"bundle": "webpack --mode production",
 		"bundle:esbuild": "webpack --mode production --env esbuild",
 		"clean": "git clean -Xdf -e !node_modules -e !node_modules/**/*",
@@ -9209,6 +9695,7 @@
 		"eslint-cli": "1.1.1",
 		"eslint-config-prettier": "8.0.0",
 		"eslint-plugin-import": "2.22.1",
+		"fantasticon": "1.1.1",
 		"fork-ts-checker-webpack-plugin": "6.1.0",
 		"html-loader": "2.1.0",
 		"html-webpack-plugin": "5.2.0",
@@ -9218,6 +9705,7 @@
 		"node-sass": "5.0.0",
 		"prettier": "2.2.1",
 		"sass-loader": "11.0.1",
+		"svgtofont": "3.8.2",
 		"terser-webpack-plugin": "5.1.1",
 		"ts-loader": "8.0.17",
 		"typescript": "4.2.2",

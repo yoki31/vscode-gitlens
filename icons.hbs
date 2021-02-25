@@ -1,0 +1,18 @@
+{
+	"icons": [
+		{{# each codepoints}}
+		{
+			"id": "{{@key}}",
+			"description": "{{@key}} icon",
+			"default": {
+				"fontId": "gitlens-icons",
+				"fontCharacter": "\\\{{codepoint this}}"
+			}
+		{{#if @last}}
+		}
+		{{else}}
+		},
+		{{/if}}
+		{{/ each }}
+	]
+}
