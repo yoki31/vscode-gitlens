@@ -1,13 +1,15 @@
-'use strict';
-import { TextEditor, Uri } from 'vscode';
-import { executeGitCommand } from '../commands';
-import { Container } from '../container';
-import { SearchPattern } from '../git/git';
+import type { TextEditor, Uri } from 'vscode';
+import { Commands } from '../constants.commands';
+import type { Container } from '../container';
+import { executeGitCommand } from '../git/actions';
 import { GitUri } from '../git/gitUri';
-import { Logger } from '../logger';
-import { Messages } from '../messages';
-import { Iterables } from '../system';
-import { ActiveEditorCommand, command, Commands, getCommandUri } from './common';
+import { createSearchQueryForCommits } from '../git/search';
+import { showFileNotUnderSourceControlWarningMessage, showGenericErrorMessage } from '../messages';
+import { createMarkdownCommandLink } from '../system/commands';
+import { filterMap } from '../system/iterable';
+import { Logger } from '../system/logger';
+import { command } from '../system/vscode/command';
+import { ActiveEditorCommand, getCommandUri } from './base';
 
 export interface ShowCommitsInViewCommandArgs {
 	refs?: string[];
@@ -16,14 +18,21 @@ export interface ShowCommitsInViewCommandArgs {
 
 @command()
 export class ShowCommitsInViewCommand extends ActiveEditorCommand {
-	constructor() {
-		super([Commands.ShowCommitInView, Commands.ShowCommitsInView]);
+	static createMarkdownCommandLink(sha: string, repoPath: string): string;
+	static createMarkdownCommandLink(args: ShowCommitsInViewCommandArgs): string;
+	static createMarkdownCommandLink(argsOrSha: ShowCommitsInViewCommandArgs | string, repoPath?: string): string {
+		const args = typeof argsOrSha === 'string' ? { refs: [argsOrSha], repoPath: repoPath } : argsOrSha;
+		return createMarkdownCommandLink<ShowCommitsInViewCommandArgs>(Commands.ShowCommitsInView, args);
+	}
+
+	constructor(private readonly container: Container) {
+		super(Commands.ShowCommitsInView);
 	}
 
 	async execute(editor?: TextEditor, uri?: Uri, args?: ShowCommitsInViewCommandArgs) {
 		args = { ...args };
 
-		if (args.refs === undefined) {
+		if (args.refs == null) {
 			uri = getCommandUri(uri, editor);
 			if (uri == null) return undefined;
 
@@ -35,22 +44,20 @@ export class ShowCommitsInViewCommand extends ActiveEditorCommand {
 				try {
 					// Check for any uncommitted changes in the range
 					const blame = editor.document.isDirty
-						? await Container.git.getBlameForRangeContents(
+						? await this.container.git.getBlameForRangeContents(
 								gitUri,
 								editor.selection,
 								editor.document.getText(),
 						  )
-						: await Container.git.getBlameForRange(gitUri, editor.selection);
+						: await this.container.git.getBlameForRange(gitUri, editor.selection);
 					if (blame === undefined) {
-						return Messages.showFileNotUnderSourceControlWarningMessage('Unable to find commits');
+						return void showFileNotUnderSourceControlWarningMessage('Unable to find commits');
 					}
 
-					args.refs = [
-						...Iterables.filterMap(blame.commits.values(), c => (c.isUncommitted ? undefined : c.ref)),
-					];
+					args.refs = [...filterMap(blame.commits.values(), c => (c.isUncommitted ? undefined : c.ref))];
 				} catch (ex) {
 					Logger.error(ex, 'ShowCommitsInViewCommand', 'getBlameForRange');
-					return Messages.showGenericErrorMessage('Unable to find commits');
+					return void showGenericErrorMessage('Unable to find commits');
 				}
 			} else {
 				if (gitUri.sha == null) return undefined;
@@ -59,11 +66,15 @@ export class ShowCommitsInViewCommand extends ActiveEditorCommand {
 			}
 		}
 
+		// if (args.refs.length === 1) {
+		// 	return showDetailsView(createReference(args.refs[0], args.repoPath!, { refType: 'revision' }));
+		// }
+
 		return executeGitCommand({
 			command: 'search',
 			state: {
 				repo: args?.repoPath,
-				pattern: SearchPattern.fromCommits(args.refs),
+				query: createSearchQueryForCommits(args.refs),
 				showResultsInSideBar: true,
 			},
 		});

@@ -1,17 +1,13 @@
-'use strict';
-
 export interface Disposable {
 	dispose(): void;
 }
 
-export interface Event<T> {
-	(listener: (e: T) => any, thisArgs?: any, disposables?: Disposable[]): Disposable;
-}
+export type Event<T> = (listener: (e: T) => unknown, thisArgs?: unknown, disposables?: Disposable[]) => Disposable;
 
-type Listener<T> = [(e: T) => void, any] | ((e: T) => void);
+type Listener<T> = [(e: T) => void, unknown] | ((e: T) => void);
 
 export class Emitter<T> {
-	private static readonly _noop = function () {
+	private static readonly _noop = function (this: void) {
 		/* noop */
 	};
 
@@ -26,7 +22,7 @@ export class Emitter<T> {
 	 */
 	get event(): Event<T> {
 		if (this._event == null) {
-			this._event = (listener: (e: T) => any, thisArgs?: any, disposables?: Disposable[]) => {
+			this._event = (listener: (e: T) => unknown, thisArgs?: unknown, disposables?: Disposable[]) => {
 				if (this.listeners == null) {
 					this.listeners = new LinkedList();
 				}
@@ -41,6 +37,7 @@ export class Emitter<T> {
 						}
 					},
 				};
+
 				if (Array.isArray(disposables)) {
 					disposables.push(result);
 				}
@@ -77,8 +74,7 @@ export class Emitter<T> {
 					} else {
 						listener[0].call(listener[1], event);
 					}
-				} catch (e) {
-					// eslint-disable-next-line no-debugger
+				} catch (_ex) {
 					debugger;
 				}
 			}

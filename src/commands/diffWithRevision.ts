@@ -1,15 +1,21 @@
-'use strict';
-import { TextDocumentShowOptions, TextEditor, Uri } from 'vscode';
+import type { TextDocumentShowOptions, TextEditor, Uri } from 'vscode';
 import { GlyphChars, quickPickTitleMaxChars } from '../constants';
-import { Container } from '../container';
-import { GitRevision } from '../git/git';
+import { Commands } from '../constants.commands';
+import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
-import { Logger } from '../logger';
-import { Messages } from '../messages';
-import { CommandQuickPickItem, CommitPicker } from '../quickpicks';
-import { Strings } from '../system';
-import { ActiveEditorCommand, command, Commands, executeCommand, getCommandUri } from './common';
-import { DiffWithCommandArgs } from './diffWith';
+import { shortenRevision } from '../git/models/reference';
+import { showGenericErrorMessage } from '../messages';
+import { showCommitPicker } from '../quickpicks/commitPicker';
+import { CommandQuickPickItem } from '../quickpicks/items/common';
+import type { DirectiveQuickPickItem } from '../quickpicks/items/directive';
+import { createDirectiveQuickPickItem, Directive } from '../quickpicks/items/directive';
+import { Logger } from '../system/logger';
+import { pad } from '../system/string';
+import { command, executeCommand } from '../system/vscode/command';
+import { splitPath } from '../system/vscode/path';
+import { ActiveEditorCommand, getCommandUri } from './base';
+import type { DiffWithCommandArgs } from './diffWith';
+import type { DiffWithRevisionFromCommandArgs } from './diffWithRevisionFrom';
 
 export interface DiffWithRevisionCommandArgs {
 	line?: number;
@@ -18,7 +24,7 @@ export interface DiffWithRevisionCommandArgs {
 
 @command()
 export class DiffWithRevisionCommand extends ActiveEditorCommand {
-	constructor() {
+	constructor(private readonly container: Container) {
 		super(Commands.DiffWithRevision);
 	}
 
@@ -34,29 +40,79 @@ export class DiffWithRevisionCommand extends ActiveEditorCommand {
 		}
 
 		try {
-			const log = Container.git
+			const log = this.container.git
 				.getLogForFile(gitUri.repoPath, gitUri.fsPath)
 				.then(
 					log =>
 						log ??
 						(gitUri.sha
-							? Container.git.getLogForFile(gitUri.repoPath, gitUri.fsPath, { ref: gitUri.sha })
+							? this.container.git.getLogForFile(gitUri.repoPath, gitUri.fsPath, { ref: gitUri.sha })
 							: undefined),
 				);
 
-			const title = `Open Changes with Revision${Strings.pad(GlyphChars.Dot, 2, 2)}`;
-			const pick = await CommitPicker.show(
-				log,
-				`${title}${gitUri.getFormattedFilename({
-					suffix: gitUri.sha ? `:${GitRevision.shorten(gitUri.sha)}` : undefined,
-					truncateTo: quickPickTitleMaxChars - title.length,
-				})}`,
-				'Choose a commit to compare with',
-				{
-					picked: gitUri.sha,
+			const title = `Open Changes with Revision${pad(GlyphChars.Dot, 2, 2)}`;
+			const titleWithContext = `${title}${gitUri.getFormattedFileName({
+				suffix: gitUri.sha ? `:${shortenRevision(gitUri.sha)}` : undefined,
+				truncateTo: quickPickTitleMaxChars - title.length,
+			})}`;
+			const pick = await showCommitPicker(log, titleWithContext, 'Choose a commit to compare with', {
+				empty: !gitUri.sha
+					? {
+							getState: async () => {
+								const items: (CommandQuickPickItem | DirectiveQuickPickItem)[] = [];
+
+								const status = await this.container.git.getStatus(gitUri.repoPath);
+								if (status != null) {
+									for (const f of status.files) {
+										if (f.workingTreeStatus === '?' || f.workingTreeStatus === '!') {
+											continue;
+										}
+
+										const [label, description] = splitPath(f.path, undefined, true);
+
+										items.push(
+											new CommandQuickPickItem<[Uri]>(
+												{
+													label: label,
+													description: description,
+												},
+												undefined,
+												Commands.DiffWithRevision,
+												[this.container.git.getAbsoluteUri(f.path, gitUri.repoPath)],
+											),
+										);
+									}
+								}
+
+								let newPlaceholder;
+								let newTitle;
+
+								if (items.length) {
+									newPlaceholder = `${gitUri.getFormattedFileName()} is likely untracked, choose a different file?`;
+									newTitle = `${titleWithContext} (Untracked?)`;
+								} else {
+									newPlaceholder = 'No commits found';
+								}
+
+								items.push(
+									createDirectiveQuickPickItem(Directive.Cancel, undefined, {
+										label: items.length ? 'Cancel' : 'OK',
+									}),
+								);
+
+								return {
+									items: items,
+									placeholder: newPlaceholder,
+									title: newTitle,
+								};
+							},
+					  }
+					: undefined,
+				picked: gitUri.sha,
+				keyboard: {
 					keys: ['right', 'alt+right', 'ctrl+right'],
-					onDidPressKey: async (key, item) => {
-						void (await executeCommand<DiffWithCommandArgs>(Commands.DiffWith, {
+					onDidPressKey: async (_key, item) => {
+						await executeCommand<DiffWithCommandArgs>(Commands.DiffWith, {
 							repoPath: gitUri.repoPath,
 							lhs: {
 								sha: item.item.ref,
@@ -66,16 +122,24 @@ export class DiffWithRevisionCommand extends ActiveEditorCommand {
 								sha: '',
 								uri: gitUri,
 							},
-							line: args!.line,
-							showOptions: args!.showOptions,
-						}));
+							line: args.line,
+							showOptions: args.showOptions,
+						});
 					},
-					showOtherReferences: CommandQuickPickItem.fromCommand(
-						'Choose a branch or tag...',
-						Commands.DiffWithRevisionFrom,
-					),
 				},
-			);
+				showOtherReferences: [
+					CommandQuickPickItem.fromCommand<[Uri]>(
+						'Choose a Branch or Tag...',
+						Commands.DiffWithRevisionFrom,
+						[uri],
+					),
+					CommandQuickPickItem.fromCommand<[Uri, DiffWithRevisionFromCommandArgs]>(
+						'Choose a Stash...',
+						Commands.DiffWithRevisionFrom,
+						[uri, { stash: true }],
+					),
+				],
+			});
 			if (pick == null) return;
 
 			void (await executeCommand<DiffWithCommandArgs>(Commands.DiffWith, {
@@ -93,7 +157,7 @@ export class DiffWithRevisionCommand extends ActiveEditorCommand {
 			}));
 		} catch (ex) {
 			Logger.error(ex, 'DiffWithRevisionCommand');
-			void Messages.showGenericErrorMessage('Unable to open compare');
+			void showGenericErrorMessage('Unable to open compare');
 		}
 	}
 }

@@ -1,104 +1,237 @@
-'use strict';
+import type { QuickInputButton } from 'vscode';
 import { Uri } from 'vscode';
 import { getAvatarUri } from '../../avatars';
-import { configuration, ContributorSorting, GravatarDefaultStyle } from '../../configuration';
-import { Dates, memoize } from '../../system';
+import type { ContributorSorting, GravatarDefaultStyle } from '../../config';
+import type { QuickPickItemOfT } from '../../quickpicks/items/common';
+import { formatDate, fromNow } from '../../system/date';
+import { memoize } from '../../system/decorators/memoize';
+import { sortCompare } from '../../system/string';
+import { configuration } from '../../system/vscode/configuration';
+import type { GitUser } from './user';
+
+export interface GitContributorStats {
+	readonly count: number;
+	readonly contributions: number[];
+}
+
+export type GitContributionTiers = '[1]' | '[2-5]' | '[6-10]' | '[11-50]' | '[51-100]' | '[101+]';
+
+export function calculateDistribution<T extends string>(
+	stats: GitContributorStats | undefined,
+	prefix: T,
+): Record<`${typeof prefix}${GitContributionTiers}`, number> {
+	if (stats == null) return {} as unknown as Record<`${typeof prefix}${GitContributionTiers}`, number>;
+
+	const distribution: Record<`${string}${GitContributionTiers}`, number> = {
+		[`${prefix}[1]`]: 0,
+		[`${prefix}[2-5]`]: 0,
+		[`${prefix}[6-10]`]: 0,
+		[`${prefix}[11-50]`]: 0,
+		[`${prefix}[51-100]`]: 0,
+		[`${prefix}[101+]`]: 0,
+	};
+
+	for (const c of stats.contributions) {
+		if (c === 1) {
+			distribution[`${prefix}[1]`]++;
+		} else if (c <= 5) {
+			distribution[`${prefix}[2-5]`]++;
+		} else if (c <= 10) {
+			distribution[`${prefix}[6-10]`]++;
+		} else if (c <= 50) {
+			distribution[`${prefix}[11-50]`]++;
+		} else if (c <= 100) {
+			distribution[`${prefix}[51-100]`]++;
+		} else {
+			distribution[`${prefix}[101+]`]++;
+		}
+	}
+
+	return distribution;
+}
+
+export class GitContributor {
+	constructor(
+		public readonly repoPath: string,
+		public readonly name: string | undefined,
+		public readonly email: string | undefined,
+		public readonly count: number,
+		public readonly date?: Date,
+		public readonly current: boolean = false,
+		public readonly stats?: {
+			files: number;
+			additions: number;
+			deletions: number;
+		},
+		public readonly username?: string | undefined,
+		private readonly avatarUrl?: string | undefined,
+		public readonly id?: string | undefined,
+	) {}
+
+	get label(): string {
+		return this.name ?? this.username!;
+	}
+
+	@memoize<GitContributor['formatDate']>(format => format ?? 'MMMM Do, YYYY h:mma')
+	formatDate(format?: string | null): string {
+		return this.date != null ? formatDate(this.date, format ?? 'MMMM Do, YYYY h:mma') : '';
+	}
+
+	formatDateFromNow(short?: boolean): string {
+		return this.date != null ? fromNow(this.date, short) : '';
+	}
+
+	getAvatarUri(options?: { defaultStyle?: GravatarDefaultStyle; size?: number }): Uri | Promise<Uri> {
+		if (this.avatarUrl != null) return Uri.parse(this.avatarUrl);
+
+		return getAvatarUri(this.email, undefined /*this.repoPath*/, options);
+	}
+
+	getCoauthor(): string {
+		return `${this.name}${this.email ? ` <${this.email}>` : ''}`;
+	}
+}
+
+export function matchContributor(c: GitContributor, user: GitUser): boolean {
+	return c.name === user.name && c.email === user.email && c.username === user.username;
+}
+
+export function isContributor(contributor: any): contributor is GitContributor {
+	return contributor instanceof GitContributor;
+}
+
+export type ContributorQuickPickItem = QuickPickItemOfT<GitContributor>;
+
+export async function createContributorQuickPickItem(
+	contributor: GitContributor,
+	picked?: boolean,
+	options?: { alwaysShow?: boolean; buttons?: QuickInputButton[] },
+): Promise<ContributorQuickPickItem> {
+	const item: ContributorQuickPickItem = {
+		label: contributor.label,
+		description: contributor.current ? 'you' : contributor.email,
+		alwaysShow: options?.alwaysShow,
+		buttons: options?.buttons,
+		picked: picked,
+		item: contributor,
+		iconPath: configuration.get('gitCommands.avatars') ? await contributor.getAvatarUri() : undefined,
+	};
+
+	if (options?.alwaysShow == null && picked) {
+		item.alwaysShow = true;
+	}
+	return item;
+}
 
 export interface ContributorSortOptions {
 	current?: true;
 	orderBy?: ContributorSorting;
 }
 
-export class GitContributor {
-	static is(contributor: any): contributor is GitContributor {
-		return contributor instanceof GitContributor;
-	}
+interface ContributorQuickPickSortOptions extends ContributorSortOptions {
+	picked?: boolean;
+}
 
-	static sort(contributors: GitContributor[], options?: ContributorSortOptions) {
-		options = { current: true, orderBy: configuration.get('sortContributorsBy'), ...options };
+export function sortContributors(contributors: GitContributor[], options?: ContributorSortOptions): GitContributor[];
+export function sortContributors(
+	contributors: ContributorQuickPickItem[],
+	options?: ContributorQuickPickSortOptions,
+): ContributorQuickPickItem[];
+export function sortContributors(
+	contributors: GitContributor[] | ContributorQuickPickItem[],
+	options?: (ContributorSortOptions & { picked?: never }) | ContributorQuickPickSortOptions,
+) {
+	options = { picked: true, current: true, orderBy: configuration.get('sortContributorsBy'), ...options };
 
-		switch (options.orderBy) {
-			case ContributorSorting.CountAsc:
-				return contributors.sort(
-					(a, b) =>
-						(a.current ? -1 : 1) - (b.current ? -1 : 1) ||
-						a.count - b.count ||
-						a.date.getTime() - b.date.getTime(),
+	const getContributor = (contributor: GitContributor | ContributorQuickPickItem): GitContributor => {
+		return isContributor(contributor) ? contributor : contributor.item;
+	};
+
+	const comparePicked = (
+		a: GitContributor | ContributorQuickPickItem,
+		b: GitContributor | ContributorQuickPickItem,
+	): number => {
+		if (!options.picked || isContributor(a) || isContributor(b)) return 0;
+		return (a.picked ? -1 : 1) - (b.picked ? -1 : 1);
+	};
+
+	switch (options.orderBy) {
+		case 'count:asc':
+			return contributors.sort((a, b) => {
+				const pickedCompare = comparePicked(a, b);
+				a = getContributor(a);
+				b = getContributor(b);
+
+				return (
+					pickedCompare ||
+					(options.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
+					a.count - b.count ||
+					(a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0)
 				);
-			case ContributorSorting.DateDesc:
-				return contributors.sort(
-					(a, b) =>
-						(options!.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
-						b.date.getTime() - a.date.getTime() ||
-						b.count - a.count,
+			});
+		case 'date:desc':
+			return contributors.sort((a, b) => {
+				const pickedCompare = comparePicked(a, b);
+				a = getContributor(a);
+				b = getContributor(b);
+
+				return (
+					pickedCompare ||
+					(options.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
+					(b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0) ||
+					b.count - a.count
 				);
-			case ContributorSorting.DateAsc:
-				return contributors.sort(
-					(a, b) =>
-						(options!.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
-						a.date.getTime() - b.date.getTime() ||
-						b.count - a.count,
+			});
+		case 'date:asc':
+			return contributors.sort((a, b) => {
+				const pickedCompare = comparePicked(a, b);
+				a = getContributor(a);
+				b = getContributor(b);
+
+				return (
+					pickedCompare ||
+					(options.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
+					(a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0) ||
+					b.count - a.count
 				);
-			case ContributorSorting.NameAsc:
-				return contributors.sort(
-					(a, b) =>
-						(a.current ? -1 : 1) - (b.current ? -1 : 1) ||
-						a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+			});
+		case 'name:asc':
+			return contributors.sort((a, b) => {
+				const pickedCompare = comparePicked(a, b);
+				a = getContributor(a);
+				b = getContributor(b);
+
+				return (
+					pickedCompare ||
+					(options.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
+					sortCompare(a.name ?? a.username!, b.name ?? b.username!)
 				);
-			case ContributorSorting.NameDesc:
-				return contributors.sort(
-					(a, b) =>
-						(a.current ? -1 : 1) - (b.current ? -1 : 1) ||
-						b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' }),
+			});
+		case 'name:desc':
+			return contributors.sort((a, b) => {
+				const pickedCompare = comparePicked(a, b);
+				a = getContributor(a);
+				b = getContributor(b);
+
+				return (
+					pickedCompare ||
+					(options.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
+					sortCompare(b.name ?? b.username!, a.name ?? a.username!)
 				);
-			case ContributorSorting.CountDesc:
-			default:
-				return contributors.sort(
-					(a, b) =>
-						(a.current ? -1 : 1) - (b.current ? -1 : 1) ||
-						b.count - a.count ||
-						b.date.getTime() - a.date.getTime(),
+			});
+		case 'count:desc':
+		default:
+			return contributors.sort((a, b) => {
+				const pickedCompare = comparePicked(a, b);
+				a = getContributor(a);
+				b = getContributor(b);
+
+				return (
+					pickedCompare ||
+					(options.current ? (a.current ? -1 : 1) - (b.current ? -1 : 1) : 0) ||
+					b.count - a.count ||
+					(b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0)
 				);
-		}
-	}
-
-	constructor(
-		public readonly repoPath: string,
-		public readonly name: string,
-		public readonly email: string,
-		public readonly count: number,
-		public readonly date: Date,
-		public readonly stats?: {
-			files: number;
-			additions: number;
-			deletions: number;
-		},
-		public readonly current: boolean = false,
-	) {}
-
-	@memoize()
-	private get dateFormatter(): Dates.DateFormatter {
-		return Dates.getFormatter(this.date);
-	}
-
-	@memoize<GitContributor['formatDate']>(format => (format == null ? 'MMMM Do, YYYY h:mma' : format))
-	formatDate(format?: string | null) {
-		if (format == null) {
-			format = 'MMMM Do, YYYY h:mma';
-		}
-
-		return this.dateFormatter.format(format);
-	}
-
-	formatDateFromNow(locale?: string) {
-		return this.dateFormatter.fromNow(locale);
-	}
-
-	getAvatarUri(options?: { defaultStyle?: GravatarDefaultStyle; size?: number }): Uri | Promise<Uri> {
-		return getAvatarUri(this.email, undefined /*this.repoPath*/, options);
-	}
-
-	toCoauthor(): string {
-		return `${this.name}${this.email ? ` <${this.email}>` : ''}`;
+			});
 	}
 }

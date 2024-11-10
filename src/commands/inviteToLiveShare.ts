@@ -1,6 +1,9 @@
-'use strict';
-import { Container } from '../container';
-import { command, Command, CommandContext, Commands, isCommandContextViewNodeHasContributor } from './common';
+import { Commands } from '../constants.commands';
+import type { Container } from '../container';
+import { createMarkdownCommandLink } from '../system/commands';
+import { command } from '../system/vscode/command';
+import type { CommandContext } from './base';
+import { Command, isCommandContextViewNodeHasContributor } from './base';
 
 export interface InviteToLiveShareCommandArgs {
 	email?: string;
@@ -8,15 +11,15 @@ export interface InviteToLiveShareCommandArgs {
 
 @command()
 export class InviteToLiveShareCommand extends Command {
-	static getMarkdownCommandArgs(args: InviteToLiveShareCommandArgs): string;
-	static getMarkdownCommandArgs(email: string | undefined): string;
-	static getMarkdownCommandArgs(argsOrEmail: InviteToLiveShareCommandArgs | string | undefined): string {
+	static createMarkdownCommandLink(args: InviteToLiveShareCommandArgs): string;
+	static createMarkdownCommandLink(email: string | undefined): string;
+	static createMarkdownCommandLink(argsOrEmail: InviteToLiveShareCommandArgs | string | undefined): string {
 		const args =
 			argsOrEmail === undefined || typeof argsOrEmail === 'string' ? { email: argsOrEmail } : argsOrEmail;
-		return super.getMarkdownCommandArgsCore<InviteToLiveShareCommandArgs>(Commands.InviteToLiveShare, args);
+		return createMarkdownCommandLink<InviteToLiveShareCommandArgs>(Commands.InviteToLiveShare, args);
 	}
 
-	constructor() {
+	constructor(private readonly container: Container) {
 		super(Commands.InviteToLiveShare);
 	}
 
@@ -32,12 +35,12 @@ export class InviteToLiveShareCommand extends Command {
 
 	async execute(args?: InviteToLiveShareCommandArgs) {
 		if (args?.email) {
-			const contact = await Container.vsls.getContact(args.email);
+			const contact = await this.container.vsls.getContact(args.email);
 			if (contact != null) {
 				return contact.invite();
 			}
 		}
 
-		return Container.vsls.startSession();
+		return this.container.vsls.startSession();
 	}
 }

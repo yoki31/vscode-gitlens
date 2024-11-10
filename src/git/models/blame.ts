@@ -1,26 +1,19 @@
-'use strict';
-import { GitBlameCommit } from './blameCommit';
-import { GitAuthor, GitCommitLine } from './commit';
+import type { GitCommit, GitCommitLine } from './commit';
 
 export interface GitBlame {
 	readonly repoPath: string;
-	readonly authors: Map<string, GitAuthor>;
-	readonly commits: Map<string, GitBlameCommit>;
+	readonly authors: Map<string, GitBlameAuthor>;
+	readonly commits: Map<string, GitCommit>;
 	readonly lines: GitCommitLine[];
+}
+
+export interface GitBlameAuthor {
+	name: string;
+	lineCount: number;
 }
 
 export interface GitBlameLine {
-	readonly author?: GitAuthor;
-	readonly commit: GitBlameCommit;
+	readonly author?: GitBlameAuthor;
+	readonly commit: GitCommit;
 	readonly line: GitCommitLine;
-}
-
-export interface GitBlameLines extends GitBlame {
-	readonly allLines: GitCommitLine[];
-}
-
-export interface GitBlameCommitLines {
-	readonly author: GitAuthor;
-	readonly commit: GitBlameCommit;
-	readonly lines: GitCommitLine[];
 }

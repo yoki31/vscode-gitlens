@@ -1,83 +1,98 @@
-'use strict';
-import { Disposable, TextEditor, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import { Container } from '../../container';
-import { GitUri } from '../../git/gitUri';
-import { Logger } from '../../logger';
-import { debug, Functions, gate } from '../../system';
-import { RepositoriesView } from '../repositoriesView';
+import type { TextEditor } from 'vscode';
+import { Disposable, TreeItem, TreeItemCollapsibleState, window, workspace } from 'vscode';
+import type { RepositoriesChangeEvent } from '../../git/gitProviderService';
+import { GitUri, unknownGitUri } from '../../git/gitUri';
+import { gate } from '../../system/decorators/gate';
+import { debug } from '../../system/decorators/log';
+import { weakEvent } from '../../system/event';
+import { debounce, szudzikPairing } from '../../system/function';
+import { Logger } from '../../system/logger';
+import type { ViewsWithRepositoriesNode } from '../viewBase';
+import { createViewDecorationUri } from '../viewDecorationProvider';
+import { SubscribeableViewNode } from './abstract/subscribeableViewNode';
+import type { ViewNode } from './abstract/viewNode';
+import { ContextValues } from './abstract/viewNode';
 import { MessageNode } from './common';
 import { RepositoryNode } from './repositoryNode';
-import { ContextValues, SubscribeableViewNode, unknownGitUri, ViewNode } from './viewNode';
 
-export class RepositoriesNode extends SubscribeableViewNode<RepositoriesView> {
-	private _children: (RepositoryNode | MessageNode)[] | undefined;
-
-	constructor(view: RepositoriesView) {
-		super(unknownGitUri, view);
+export class RepositoriesNode extends SubscribeableViewNode<
+	'repositories',
+	ViewsWithRepositoriesNode,
+	RepositoryNode | MessageNode
+> {
+	constructor(view: ViewsWithRepositoriesNode) {
+		super('repositories', unknownGitUri, view);
 	}
 
-	override dispose() {
-		super.dispose();
-
-		this.resetChildren();
-	}
-
-	@debug()
-	private resetChildren() {
-		if (this._children === undefined) return;
-
-		for (const child of this._children) {
-			if (child instanceof RepositoryNode) {
-				child.dispose();
-			}
-		}
-		this._children = undefined;
-	}
-
-	async getChildren(): Promise<ViewNode[]> {
-		if (this._children === undefined) {
-			const repositories = await Container.git.getOrderedRepositories();
+	getChildren(): ViewNode[] {
+		if (this.children == null) {
+			const repositories = this.view.container.git.openRepositories;
 			if (repositories.length === 0) return [new MessageNode(this.view, this, 'No repositories could be found.')];
 
-			this._children = repositories.map(r => new RepositoryNode(GitUri.fromRepoPath(r.path), this.view, this, r));
+			this.children = repositories.map(r => new RepositoryNode(GitUri.fromRepoPath(r.path), this.view, this, r));
 		}
 
-		return this._children;
+		return this.children;
 	}
 
 	getTreeItem(): TreeItem {
-		const item = new TreeItem('Repositories', TreeItemCollapsibleState.Expanded);
-		item.contextValue = ContextValues.Repositories;
+		const isInWorkspacesView = this.view.type === 'workspaces';
+		const isLinkedWorkspace = isInWorkspacesView && this.view.container.workspaces.currentWorkspaceId != null;
+		const isCurrentLinkedWorkspace = isLinkedWorkspace && this.view.container.workspaces.currentWorkspace != null;
+		const item = new TreeItem(
+			isInWorkspacesView ? 'Current Window' : 'Repositories',
+			isInWorkspacesView ? TreeItemCollapsibleState.Collapsed : TreeItemCollapsibleState.Expanded,
+		);
 
+		if (isInWorkspacesView) {
+			item.description = workspace.name ?? workspace.workspaceFolders?.[0]?.name ?? '';
+		}
+
+		let contextValue: string = ContextValues.Repositories;
+		if (isInWorkspacesView) {
+			contextValue += '+workspaces';
+		}
+
+		if (isLinkedWorkspace) {
+			contextValue += '+linked';
+		}
+
+		if (isCurrentLinkedWorkspace) {
+			contextValue += '+current';
+			item.resourceUri = createViewDecorationUri('repositories', { currentWorkspace: true });
+		}
+
+		item.contextValue = contextValue;
 		return item;
 	}
 
 	@gate()
 	@debug()
 	override async refresh(reset: boolean = false) {
-		if (this._children === undefined) return;
+		const hasChildren = this.children != null;
+		super.refresh(reset);
+		if (!hasChildren) return;
 
 		if (reset) {
-			this.resetChildren();
 			await this.unsubscribe();
 			void this.ensureSubscription();
 
 			return;
 		}
 
-		const repositories = await Container.git.getOrderedRepositories();
-		if (repositories.length === 0 && (this._children === undefined || this._children.length === 0)) return;
+		const repositories = this.view.container.git.openRepositories;
+		if (repositories.length === 0 && (this.children == null || this.children.length === 0)) return;
 
 		if (repositories.length === 0) {
-			this._children = [new MessageNode(this.view, this, 'No repositories could be found.')];
+			this.children = [new MessageNode(this.view, this, 'No repositories could be found.')];
 			return;
 		}
 
 		const children = [];
 		for (const repo of repositories) {
-			const normalizedPath = repo.normalizedPath;
-			const child = (this._children as RepositoryNode[]).find(c => c.repo.normalizedPath === normalizedPath);
-			if (child !== undefined) {
+			const id = repo.id;
+			const child = (this.children as RepositoryNode[]).find(c => c.repo.id === id);
+			if (child != null) {
 				children.push(child);
 				void child.refresh();
 			} else {
@@ -85,50 +100,46 @@ export class RepositoriesNode extends SubscribeableViewNode<RepositoriesView> {
 			}
 		}
 
-		for (const child of this._children as RepositoryNode[]) {
-			if (children.includes(child)) continue;
-
-			child.dispose();
-		}
-
-		this._children = children;
+		this.children = children;
 
 		void this.ensureSubscription();
 	}
 
 	@debug()
 	protected subscribe() {
-		const subscriptions = [Container.git.onDidChangeRepositories(this.onRepositoriesChanged, this)];
+		const subscriptions = [
+			weakEvent(this.view.container.git.onDidChangeRepositories, this.onRepositoriesChanged, this),
+		];
 
-		if (this.view.config.autoReveal) {
+		if (this.view.id === 'gitlens.views.repositories' && this.view.config.autoReveal) {
 			subscriptions.push(
-				window.onDidChangeActiveTextEditor(Functions.debounce(this.onActiveEditorChanged, 500), this),
+				weakEvent(window.onDidChangeActiveTextEditor, debounce(this.onActiveEditorChanged, 500), this),
 			);
 		}
 
 		return Disposable.from(...subscriptions);
 	}
 
-	protected override get requiresResetOnVisible(): boolean {
-		return true;
+	protected override etag(): number {
+		return szudzikPairing(this.view.container.git.etag, this.view.container.subscription.etag);
 	}
 
 	@debug({ args: false })
 	private onActiveEditorChanged(editor: TextEditor | undefined) {
-		if (editor == null || this._children === undefined || this._children.length === 1) {
+		if (editor == null || this.children == null || this.children.length === 1) {
 			return;
 		}
 
 		try {
 			const uri = editor.document.uri;
-			const node = this._children.find(n => n instanceof RepositoryNode && n.repo.containsUri(uri)) as
+			const node = this.children.find(n => n instanceof RepositoryNode && n.repo.containsUri(uri)) as
 				| RepositoryNode
 				| undefined;
-			if (node === undefined) return;
+			if (node == null) return;
 
-			// Check to see if this repo has a descendent that is already selected
+			// Check to see if this repo has a descendant that is already selected
 			let parent = this.view.selection.length === 0 ? undefined : this.view.selection[0];
-			while (parent !== undefined) {
+			while (parent != null) {
 				if (parent === node) return;
 
 				parent = parent.getParent();
@@ -141,7 +152,7 @@ export class RepositoriesNode extends SubscribeableViewNode<RepositoriesView> {
 	}
 
 	@debug()
-	private onRepositoriesChanged() {
-		void this.triggerChange();
+	private onRepositoriesChanged(_e: RepositoriesChangeEvent) {
+		void this.triggerChange(true);
 	}
 }

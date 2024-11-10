@@ -1,25 +1,10 @@
-'use strict';
-import { is as isPromise } from '../promise';
-
-const emptyStr = '';
-
-function defaultResolver(...args: any[]): string {
-	if (args.length === 1) {
-		const arg0 = args[0];
-		if (arg0 == null) return emptyStr;
-		if (typeof arg0 === 'string') return arg0;
-		if (typeof arg0 === 'number' || typeof arg0 === 'boolean') {
-			return String(arg0);
-		}
-
-		return JSON.stringify(arg0);
-	}
-
-	return JSON.stringify(args);
-}
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+import { isPromise } from '../promise';
+import { resolveProp } from './resolver';
 
 export function gate<T extends (...arg: any) => any>(resolver?: (...args: Parameters<T>) => string) {
-	return (target: any, key: string, descriptor: PropertyDescriptor) => {
+	return (_target: any, key: string, descriptor: PropertyDescriptor) => {
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 		let fn: Function | undefined;
 		if (typeof descriptor.value === 'function') {
 			fn = descriptor.value;
@@ -31,9 +16,7 @@ export function gate<T extends (...arg: any) => any>(resolver?: (...args: Parame
 		const gateKey = `$gate$${key}`;
 
 		descriptor.value = function (this: any, ...args: any[]) {
-			const prop =
-				args.length === 0 ? gateKey : `${gateKey}$${(resolver ?? defaultResolver)(...(args as Parameters<T>))}`;
-
+			const prop = resolveProp(gateKey, resolver, ...(args as Parameters<T>));
 			if (!Object.prototype.hasOwnProperty.call(this, prop)) {
 				Object.defineProperty(this, prop, {
 					configurable: false,
@@ -47,7 +30,7 @@ export function gate<T extends (...arg: any) => any>(resolver?: (...args: Parame
 			if (promise === undefined) {
 				let result;
 				try {
-					result = fn!.apply(this, args);
+					result = fn.apply(this, args);
 					if (result == null || !isPromise(result)) {
 						return result;
 					}
@@ -57,7 +40,7 @@ export function gate<T extends (...arg: any) => any>(resolver?: (...args: Parame
 							this[prop] = undefined;
 							return r;
 						})
-						.catch(ex => {
+						.catch((ex: unknown) => {
 							this[prop] = undefined;
 							throw ex;
 						});

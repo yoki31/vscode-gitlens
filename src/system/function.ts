@@ -1,12 +1,10 @@
-'use strict';
-import { debounce as _debounce, once as _once } from 'lodash-es';
-import { Disposable } from 'vscode';
+import type { Disposable } from 'vscode';
 
 export interface Deferrable<T extends (...args: any[]) => any> {
 	(...args: Parameters<T>): ReturnType<T> | undefined;
 	cancel(): void;
 	flush(): ReturnType<T> | undefined;
-	pending?(): boolean;
+	pending(): boolean;
 }
 
 interface PropOfValue {
@@ -14,85 +12,105 @@ interface PropOfValue {
 	value: string | undefined;
 }
 
-export function cachedOnce<T>(fn: (...args: any[]) => Promise<T>, seed: T): (...args: any[]) => Promise<T> {
-	let cached: T | undefined = seed;
-	return (...args: any[]) => {
-		if (cached !== undefined) {
-			const promise = Promise.resolve(cached);
-			cached = undefined;
-
-			return promise;
-		}
-		return fn(...args);
-	};
-}
-
-export interface DebounceOptions {
-	leading?: boolean;
-	maxWait?: number;
-	track?: boolean;
-	trailing?: boolean;
-}
-
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: any[]) => ReturnType<T>>(
 	fn: T,
-	wait?: number,
-	options?: DebounceOptions,
+	wait: number,
+	aggregator?: (prevArgs: Parameters<T>, nextArgs: Parameters<T>) => Parameters<T>,
 ): Deferrable<T> {
-	const { track, ...opts }: DebounceOptions = {
-		track: false,
-		...(options ?? {}),
-	};
+	let lastArgs: Parameters<T>;
+	let lastCallTime: number | undefined;
+	let lastThis: ThisType<T>;
+	let result: ReturnType<T> | undefined;
+	let timer: ReturnType<typeof setTimeout> | undefined;
 
-	if (track !== true) return _debounce(fn, wait, opts);
+	function invoke(): ReturnType<T> | undefined {
+		const args = lastArgs;
+		const thisArg = lastThis;
 
-	let pending = false;
+		lastArgs = lastThis = undefined!;
+		result = fn.apply(thisArg, args);
+		return result;
+	}
 
-	const debounced = _debounce(
-		function (this: any, ...args: any[]) {
-			pending = false;
-			return fn.apply(this, args);
-		} as any as T,
-		wait,
-		options,
-	);
+	function shouldInvoke(time: number) {
+		const timeSinceLastCall = time - (lastCallTime ?? 0);
 
-	const tracked: Deferrable<T> = function (this: any, ...args: Parameters<T>) {
-		pending = true;
-		return debounced.apply(this, args);
-	} as any;
+		// Either this is the first call, activity has stopped and we're at the
+		// trailing edge, the system time has gone backwards and we're treating
+		// it as the trailing edge
+		return lastCallTime == null || timeSinceLastCall >= wait || timeSinceLastCall < 0;
+	}
 
-	tracked.pending = function () {
-		return pending;
-	};
-	tracked.cancel = function () {
-		return debounced.cancel.apply(debounced);
-	};
-	tracked.flush = function () {
-		return debounced.flush.apply(debounced);
-	};
+	function timerExpired() {
+		const time = Date.now();
+		if (shouldInvoke(time)) {
+			trailingEdge();
+		} else {
+			// Restart the timer
+			const timeSinceLastCall = time - (lastCallTime ?? 0);
+			timer = setTimeout(timerExpired, wait - timeSinceLastCall);
+		}
+	}
 
-	return tracked;
+	function trailingEdge() {
+		timer = undefined;
+
+		// Only invoke if we have `lastArgs` which means `fn` has been debounced at least once
+		if (lastArgs) return invoke();
+		lastArgs = undefined!;
+		lastThis = undefined!;
+
+		return result;
+	}
+
+	function cancel() {
+		if (timer != null) {
+			clearTimeout(timer);
+		}
+		lastArgs = undefined!;
+		lastCallTime = undefined!;
+		lastThis = undefined!;
+		timer = undefined!;
+	}
+
+	function flush() {
+		if (timer == null) return result;
+
+		clearTimeout(timer);
+		return trailingEdge();
+	}
+
+	function pending(): boolean {
+		return timer != null;
+	}
+
+	function debounced(this: any, ...args: Parameters<T>) {
+		const time = Date.now();
+
+		if (aggregator != null && lastArgs) {
+			lastArgs = aggregator(lastArgs, args);
+		} else {
+			lastArgs = args;
+		}
+
+		// eslint-disable-next-line @typescript-eslint/no-this-alias
+		lastThis = this;
+		lastCallTime = time;
+
+		if (timer == null) {
+			timer = setTimeout(timerExpired, wait);
+		}
+
+		return result;
+	}
+
+	debounced.cancel = cancel;
+	debounced.flush = flush;
+	debounced.pending = pending;
+	return debounced;
 }
-
-// export function debounceMemoized<T extends (...args: any[]) => any>(
-// 	fn: T,
-// 	wait?: number,
-// 	options?: DebounceOptions & { resolver?(...args: any[]): any }
-// ): T {
-// 	const { resolver, ...opts } = options || ({} as DebounceOptions & { resolver?: T });
-
-// 	const memo = _memoize(() => {
-// 		return debounce(fn, wait, opts);
-// 	}, resolver);
-
-// 	return function(this: any, ...args: []) {
-// 		return memo.apply(this, args).apply(this, args);
-// 	} as T;
-// }
 
 const comma = ',';
-const emptyStr = '';
 const equals = '=';
 const openBrace = '{';
 const openParen = '(';
@@ -102,13 +120,14 @@ const fnBodyRegex = /\(([\s\S]*)\)/;
 const fnBodyStripCommentsRegex = /(\/\*([\s\S]*?)\*\/|([^:]|^)\/\/(.*)$)/gm;
 const fnBodyStripParamDefaultValueRegex = /\s?=.*$/;
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 export function getParameters(fn: Function): string[] {
 	if (typeof fn !== 'function') throw new Error('Not supported');
 
 	if (fn.length === 0) return [];
 
 	let fnBody: string = Function.prototype.toString.call(fn);
-	fnBody = fnBody.replace(fnBodyStripCommentsRegex, emptyStr) || fnBody;
+	fnBody = fnBody.replace(fnBodyStripCommentsRegex, '') || fnBody;
 	fnBody = fnBody.slice(0, fnBody.indexOf(openBrace));
 
 	let open = fnBody.indexOf(openParen);
@@ -122,7 +141,7 @@ export function getParameters(fn: Function): string[] {
 
 	const match = fnBodyRegex.exec(fnBody);
 	return match != null
-		? match[1].split(comma).map(param => param.trim().replace(fnBodyStripParamDefaultValueRegex, emptyStr))
+		? match[1].split(comma).map(param => param.trim().replace(fnBodyStripParamDefaultValueRegex, ''))
 		: [];
 }
 
@@ -137,7 +156,35 @@ export function is<T extends object>(o: object, propOrMatcher?: keyof T | ((o: a
 }
 
 export function once<T extends (...args: any[]) => any>(fn: T): T {
-	return _once(fn);
+	let result: ReturnType<T>;
+	let called = false;
+
+	return function (this: any, ...args: Parameters<T>): ReturnType<T> {
+		if (!called) {
+			called = true;
+			result = fn.apply(this, args);
+			fn = undefined!;
+		}
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-return
+		return result;
+	} as T;
+}
+
+type PartialArgs<T extends any[], P extends any[]> = {
+	[K in keyof P]: K extends keyof T ? T[K] : never;
+};
+
+type DropFirstN<T extends any[], N extends number, I extends any[] = []> = {
+	0: T;
+	1: T extends [infer _, ...infer R] ? DropFirstN<R, N, [any, ...I]> : T;
+}[I['length'] extends N ? 0 : 1];
+
+export function partial<T extends (...args: any[]) => any, P extends any[]>(
+	fn: T,
+	...partialArgs: PartialArgs<Parameters<T>, P>
+): (...rest: DropFirstN<Parameters<T>, P['length']>) => ReturnType<T> {
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-return
+	return (...rest) => fn(...partialArgs, ...rest);
 }
 
 export function propOf<T, K extends Extract<keyof T, string>>(o: T, key: K) {
@@ -151,66 +198,61 @@ export function propOf<T, K extends Extract<keyof T, string>>(o: T, key: K) {
 	return propOfCore(o, key);
 }
 
-export function interval(fn: (...args: any[]) => void, ms: number): Disposable {
-	let timer: NodeJS.Timer | undefined;
+export function disposableInterval(fn: (...args: any[]) => void, ms: number): Disposable {
+	let timer: ReturnType<typeof setInterval> | undefined;
 	const disposable = {
 		dispose: () => {
-			if (timer !== undefined) {
+			if (timer != null) {
 				clearInterval(timer);
 				timer = undefined;
 			}
 		},
 	};
-	timer = global.setInterval(fn, ms);
+	timer = setInterval(fn, ms);
 
 	return disposable;
 }
 
-export function progress<T>(promise: Promise<T>, intervalMs: number, onProgress: () => boolean): Promise<T> {
-	return new Promise((resolve, reject) => {
-		let timer: NodeJS.Timer | undefined;
-		timer = global.setInterval(() => {
-			if (onProgress()) {
-				if (timer !== undefined) {
-					clearInterval(timer);
-					timer = undefined;
-				}
-			}
-		}, intervalMs);
-
-		promise.then(
-			() => {
-				if (timer !== undefined) {
-					clearInterval(timer);
-					timer = undefined;
-				}
-
-				resolve(promise);
-			},
-			ex => {
-				if (timer !== undefined) {
-					clearInterval(timer);
-					timer = undefined;
-				}
-
-				reject(ex);
-			},
-		);
-	});
-}
-
-export async function wait(ms: number) {
-	await new Promise(resolve => setTimeout(resolve, ms));
-}
-
-export async function waitUntil(fn: (...args: any[]) => boolean, timeout: number): Promise<boolean> {
-	const max = Math.round(timeout / 100);
-	let counter = 0;
-	while (true) {
-		if (fn()) return true;
-		if (counter > max) return false;
-
-		await wait(100);
-		counter++;
+export async function sequentialize<T extends (...args: any[]) => unknown>(
+	fn: T,
+	argArray: Parameters<T>[],
+	thisArg?: unknown,
+): Promise<any> {
+	for (const args of argArray) {
+		try {
+			void (await fn.apply(thisArg, args));
+		} catch {}
 	}
+}
+
+/**
+ * Szudzik elegant pairing function
+ * http://szudzik.com/ElegantPairing.pdf
+ */
+export function szudzikPairing(x: number, y: number): number {
+	return x >= y ? x * x + x + y : x + y * y;
+}
+
+export function throttle<T extends (...args: any[]) => ReturnType<T>>(fn: T, delay: number) {
+	let waiting = false;
+	let waitingArgs: Parameters<T> | undefined;
+
+	return function (this: unknown, ...args: Parameters<T>) {
+		if (waiting) {
+			waitingArgs = args;
+
+			return;
+		}
+
+		waiting = true;
+		fn.apply(this, args);
+
+		setTimeout(() => {
+			waiting = false;
+
+			if (waitingArgs != null) {
+				fn.apply(this, waitingArgs);
+			}
+		}, delay);
+	};
 }

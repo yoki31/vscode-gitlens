@@ -1,9 +1,10 @@
-'use strict';
-import { Range, Uri } from 'vscode';
-import { DynamicAutolinkReference } from '../../annotations/autolinks';
-import { AutolinkReference } from '../../config';
-import { Repository } from '../models/repository';
-import { RemoteProvider } from './provider';
+import type { Range, Uri } from 'vscode';
+import type { AutolinkReference, DynamicAutolinkReference } from '../../autolinks';
+import type { GkProviderId } from '../../gk/models/repositoryIdentities';
+import type { Brand, Unbrand } from '../../system/brand';
+import type { Repository } from '../models/repository';
+import type { RemoteProviderId } from './remoteProvider';
+import { RemoteProvider } from './remoteProvider';
 
 const gitRegex = /\/_git\/?/i;
 const legacyDefaultCollectionRegex = /^DefaultCollection\//i;
@@ -15,7 +16,9 @@ const fileRegex = /path=([^&]+)/i;
 const rangeRegex = /line=(\d+)(?:&lineEnd=(\d+))?/;
 
 export class AzureDevOpsRemote extends RemoteProvider {
+	private readonly project: string | undefined;
 	constructor(domain: string, path: string, protocol?: string, name?: string, legacy: boolean = false) {
+		let repoProject;
 		if (sshDomainRegex.test(domain)) {
 			path = path.replace(sshPathRegex, '');
 			domain = domain.replace(sshDomainRegex, '');
@@ -25,6 +28,8 @@ export class AzureDevOpsRemote extends RemoteProvider {
 			if (match != null) {
 				const [, org, project, rest] = match;
 
+				repoProject = project;
+
 				// Handle legacy vsts urls
 				if (legacy) {
 					domain = `${org}.${domain}`;
@@ -33,6 +38,13 @@ export class AzureDevOpsRemote extends RemoteProvider {
 					path = `${org}/${project}/_git/${rest}`;
 				}
 			}
+		} else {
+			const match = orgAndProjectRegex.exec(path);
+			if (match != null) {
+				const [, , project] = match;
+
+				repoProject = project;
+			}
 		}
 
 		// Azure DevOps allows projects and repository names with spaces. In that situation,
@@ -40,6 +52,7 @@ export class AzureDevOpsRemote extends RemoteProvider {
 		// revert that encoding to avoid double-encoding by gitlens during copy remote and open remote
 		path = decodeURIComponent(path);
 		super(domain, path, protocol, name);
+		this.project = repoProject;
 	}
 
 	private _autolinks: (AutolinkReference | DynamicAutolinkReference)[] | undefined;
@@ -51,13 +64,23 @@ export class AzureDevOpsRemote extends RemoteProvider {
 				{
 					prefix: '#',
 					url: `${workUrl}/_workitems/edit/<num>`,
+					alphanumeric: false,
+					ignoreCase: false,
 					title: `Open Work Item #<num> on ${this.name}`,
+
+					type: 'issue',
+					description: `${this.name} Work Item #<num>`,
 				},
 				{
 					// Default Pull request message when merging a PR in ADO. Will not catch commits & pushes following a different pattern.
-					prefix: 'Merged PR ',
+					prefix: 'PR ',
 					url: `${this.baseUrl}/pullrequest/<num>`,
+					alphanumeric: false,
+					ignoreCase: false,
 					title: `Open Pull Request #<num> on ${this.name}`,
+
+					type: 'pullrequest',
+					description: `${this.name} Pull Request #<num>`,
 				},
 			];
 		}
@@ -65,15 +88,39 @@ export class AzureDevOpsRemote extends RemoteProvider {
 	}
 
 	override get icon() {
-		return 'vsts';
+		return 'azdo';
 	}
 
-	get id() {
+	get id(): RemoteProviderId {
 		return 'azure-devops';
+	}
+
+	get gkProviderId(): GkProviderId {
+		return 'azureDevops' satisfies Unbrand<GkProviderId> as Brand<GkProviderId>;
 	}
 
 	get name() {
 		return 'Azure DevOps';
+	}
+
+	override get providerDesc():
+		| {
+				id: GkProviderId;
+				repoDomain: string;
+				repoName: string;
+				repoOwnerDomain: string;
+		  }
+		| undefined {
+		if (this.gkProviderId == null || this.owner == null || this.repoName == null || this.project == null) {
+			return undefined;
+		}
+
+		return {
+			id: this.gkProviderId,
+			repoDomain: this.project,
+			repoName: this.repoName,
+			repoOwnerDomain: this.owner,
+		};
 	}
 
 	private _displayPath: string | undefined;

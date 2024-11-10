@@ -1,10 +1,31 @@
 {
-	"extends": "../../../tsconfig.json",
+	"extends": "../../../tsconfig.base.json",
 	"compilerOptions": {
-		"allowSyntheticDefaultImports": true,
-		"lib": ["dom", "dom.iterable", "es2019"],
-		"outDir": "../../"
+		"jsx": "react",
+		"lib": ["dom", "dom.iterable", "es2022", "esnext.disposable"],
+		"outDir": "../../",
+		"paths": {
+			"@env/*": ["src/env/browser/*"]
+		},
+		"useDefineForClassFields": false // Needed for lit decorators https://github.com/lit/lit/issues/3278 https://lit.dev/docs/tools/publishing/#publishing-modern-javascript
 	},
-	"include": ["../../config.ts", "../protocol.ts", "**/*"],
-	"exclude": ["node_modules", "test"]
+	// Keep in sync with `eslint.config.mjs`
+	"include": [
+		"**/*",
+		"../../@types/**/*",
+		"../../env/browser/**/*",
+		"../../plus/gk/account/promos.ts",
+		"../../plus/gk/account/subscription.ts",
+		"../../plus/webviews/**/protocol.ts",
+		"../protocol.ts",
+		"../**/protocol.ts",
+		"../../config.ts",
+		"../../constants.ts",
+		"../../constants.*.ts",
+		"../../features.ts",
+		"../../subscription.ts",
+		"../../system/*.ts",
+		"../../system/decorators/log.ts"
+	],
+	"exclude": []
 }

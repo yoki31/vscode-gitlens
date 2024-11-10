@@ -1,38 +1,39 @@
-'use strict';
-import { Range, TextEditor, TextEditorDecorationType } from 'vscode';
-import { FileAnnotationType } from '../configuration';
-import { GitBlameCommit } from '../git/git';
-import { Logger } from '../logger';
-import { log, Strings } from '../system';
-import { GitDocumentState } from '../trackers/gitDocumentTracker';
-import { TrackedDocument } from '../trackers/trackedDocument';
-import { AnnotationContext } from './annotationProvider';
-import { Annotations } from './annotations';
+import type { TextEditor } from 'vscode';
+import { Range } from 'vscode';
+import type { Container } from '../container';
+import type { GitCommit } from '../git/models/commit';
+import { log } from '../system/decorators/log';
+import { getLogScope } from '../system/logger.scope';
+import { maybeStopWatch } from '../system/stopwatch';
+import type { TrackedGitDocument } from '../trackers/trackedDocument';
+import type { AnnotationContext, AnnotationState, DidChangeStatusCallback } from './annotationProvider';
+import type { Decoration } from './annotations';
+import { addOrUpdateGutterHeatmapDecoration } from './annotations';
 import { BlameAnnotationProviderBase } from './blameAnnotationProvider';
 
 export class GutterHeatmapBlameAnnotationProvider extends BlameAnnotationProviderBase {
-	constructor(editor: TextEditor, trackedDocument: TrackedDocument<GitDocumentState>) {
-		super(FileAnnotationType.Heatmap, editor, trackedDocument);
+	constructor(
+		container: Container,
+		onDidChangeStatus: DidChangeStatusCallback,
+		editor: TextEditor,
+		trackedDocument: TrackedGitDocument,
+	) {
+		super(container, onDidChangeStatus, 'heatmap', editor, trackedDocument);
 	}
 
 	@log()
-	async onProvideAnnotation(context?: AnnotationContext, _type?: FileAnnotationType): Promise<boolean> {
-		const cc = Logger.getCorrelationContext();
+	override async onProvideAnnotation(_context?: AnnotationContext, state?: AnnotationState): Promise<boolean> {
+		const scope = getLogScope();
 
-		this.annotationContext = context;
-
-		const blame = await this.getBlame();
+		const blame = await this.getBlame(state?.recompute);
 		if (blame == null) return false;
 
-		let start = process.hrtime();
+		using sw = maybeStopWatch(scope);
 
-		const decorationsMap = new Map<
-			string,
-			{ decorationType: TextEditorDecorationType; rangesOrOptions: Range[] }
-		>();
-		const computedHeatmap = await this.getComputedHeatmap(blame);
+		const decorationsMap = new Map<string, Decoration<Range[]>>();
+		const computedHeatmap = this.getComputedHeatmap(blame);
 
-		let commit: GitBlameCommit | undefined;
+		let commit: GitCommit | undefined;
 		for (const l of blame.lines) {
 			// editor lines are 0-based
 			const editorLine = l.line - 1;
@@ -40,7 +41,7 @@ export class GutterHeatmapBlameAnnotationProvider extends BlameAnnotationProvide
 			commit = blame.commits.get(l.sha);
 			if (commit == null) continue;
 
-			Annotations.addOrUpdateGutterHeatmapDecoration(
+			addOrUpdateGutterHeatmapDecoration(
 				commit.date,
 				computedHeatmap,
 				new Range(editorLine, 0, editorLine, 0),
@@ -48,21 +49,15 @@ export class GutterHeatmapBlameAnnotationProvider extends BlameAnnotationProvide
 			);
 		}
 
-		Logger.log(cc, `${Strings.getDurationMilliseconds(start)} ms to compute heatmap annotations`);
+		sw?.restart({ suffix: ' to compute heatmap annotations' });
 
 		if (decorationsMap.size) {
-			start = process.hrtime();
-
 			this.setDecorations([...decorationsMap.values()]);
 
-			Logger.log(cc, `${Strings.getDurationMilliseconds(start)} ms to apply recent changes annotations`);
+			sw?.stop({ suffix: ' to apply all heatmap annotations' });
 		}
 
-		// this.registerHoverProviders(Container.config.hovers.annotations);
+		// this.registerHoverProviders(configuration.get('hovers.annotations'));
 		return true;
-	}
-
-	selection(_selection?: AnnotationContext['selection']): Promise<void> {
-		return Promise.resolve();
 	}
 }

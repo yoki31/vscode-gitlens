@@ -1,37 +1,12 @@
-'use strict';
-import { LogCorrelationContext, Logger, TraceLevel } from '../../logger';
-import { filterMap } from '../array';
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+import { hrtime } from '@env/hrtime';
 import { getParameters } from '../function';
-import { is as isPromise } from '../promise';
+import { getLoggableName, Logger } from '../logger';
+import { slowCallWarningThreshold } from '../logger.constants';
+import type { LogScope } from '../logger.scope';
+import { clearLogScope, getLoggableScopeBlock, logScopeIdGenerator, setLogScope } from '../logger.scope';
+import { isPromise } from '../promise';
 import { getDurationMilliseconds } from '../string';
-
-const emptyStr = '';
-
-const correlationContext = new Map<number, LogCorrelationContext>();
-let correlationCounter = 0;
-
-export function getCorrelationContext() {
-	return correlationContext.get(correlationCounter);
-}
-
-export function getCorrelationId() {
-	return correlationCounter;
-}
-
-export function getNextCorrelationId() {
-	if (correlationCounter === Number.MAX_SAFE_INTEGER) {
-		correlationCounter = 0;
-	}
-	return ++correlationCounter;
-}
-
-function clearCorrelationContext(correlationId: number) {
-	correlationContext.delete(correlationId);
-}
-
-function setCorrelationContext(correlationId: number, context: LogCorrelationContext) {
-	correlationContext.set(correlationId, context);
-}
 
 export interface LogContext {
 	id: number;
@@ -41,53 +16,81 @@ export interface LogContext {
 	prefix: string;
 }
 
+interface LogOptions<T extends (...arg: any) => any> {
+	args?:
+		| false
+		| {
+				0?: ((arg: Parameters<T>[0]) => unknown) | string | false;
+				1?: ((arg: Parameters<T>[1]) => unknown) | string | false;
+				2?: ((arg: Parameters<T>[2]) => unknown) | string | false;
+				3?: ((arg: Parameters<T>[3]) => unknown) | string | false;
+				4?: ((arg: Parameters<T>[4]) => unknown) | string | false;
+				[key: number]: (((arg: any) => unknown) | string | false) | undefined;
+		  };
+	if?(this: any, ...args: Parameters<T>): boolean;
+	enter?(...args: Parameters<T>): string;
+	exit?: ((result: PromiseType<ReturnType<T>>) => string) | boolean;
+	prefix?(context: LogContext, ...args: Parameters<T>): string;
+	logThreshold?: number;
+	scoped?: boolean;
+	singleLine?: boolean;
+	timed?: boolean;
+}
+
 export const LogInstanceNameFn = Symbol('logInstanceNameFn');
 
 export function logName<T>(fn: (c: T, name: string) => string) {
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 	return (target: Function) => {
 		(target as any)[LogInstanceNameFn] = fn;
 	};
 }
 
-export function debug<T extends (...arg: any) => any>(
-	options: {
-		args?: false | Record<string, (arg: any) => string | false>;
-		condition?(...args: Parameters<T>): boolean;
-		correlate?: boolean;
-		enter?(...args: Parameters<T>): string;
-		exit?(result: PromiseType<ReturnType<T>>): string;
-		prefix?(context: LogContext, ...args: Parameters<T>): string;
-		sanitize?(key: string, value: any): any;
-		singleLine?: boolean;
-		timed?: boolean;
-	} = { timed: true },
-) {
-	return log<T>({ debug: true, ...options });
+export function debug<T extends (...arg: any) => any>(options?: LogOptions<T>) {
+	return log<T>(options, true);
 }
 
 type PromiseType<T> = T extends Promise<infer U> ? U : T;
 
-export function log<T extends (...arg: any) => any>(
-	options: {
-		args?: false | Record<number, (arg: any) => string | false>;
-		condition?(...args: Parameters<T>): boolean;
-		correlate?: boolean;
-		debug?: boolean;
-		enter?(...args: Parameters<T>): string;
-		exit?(result: PromiseType<ReturnType<T>>): string;
-		prefix?(context: LogContext, ...args: Parameters<T>): string;
-		sanitize?(key: string, value: any): any;
-		singleLine?: boolean;
-		timed?: boolean;
-	} = { timed: true },
-) {
-	options = { timed: true, ...options };
+export function log<T extends (...arg: any) => any>(options?: LogOptions<T>, debug = false) {
+	let overrides: LogOptions<T>['args'] | undefined;
+	let ifFn: LogOptions<T>['if'] | undefined;
+	let enterFn: LogOptions<T>['enter'] | undefined;
+	let exitFn: LogOptions<T>['exit'] | undefined;
+	let prefixFn: LogOptions<T>['prefix'] | undefined;
+	let logThreshold: NonNullable<LogOptions<T>['logThreshold']> = 0;
+	let scoped: NonNullable<LogOptions<T>['scoped']> = false;
+	let singleLine: NonNullable<LogOptions<T>['singleLine']> = false;
+	let timed: NonNullable<LogOptions<T>['timed']> = true;
+	if (options != null) {
+		({
+			args: overrides,
+			if: ifFn,
+			enter: enterFn,
+			exit: exitFn,
+			prefix: prefixFn,
+			logThreshold = 0,
+			scoped = true,
+			singleLine = false,
+			timed = true,
+		} = options);
+	}
 
-	const logFn = (options.debug ? Logger.debug.bind(Logger) : Logger.log.bind(Logger)) as
-		| typeof Logger.debug
-		| typeof Logger.log;
+	if (logThreshold > 0) {
+		singleLine = true;
+		timed = true;
+	}
 
-	return (target: any, key: string, descriptor: PropertyDescriptor & Record<string, any>) => {
+	if (timed) {
+		scoped = true;
+	}
+
+	const debugging = Logger.isDebugging;
+	const logFn: (message: string, ...params: any[]) => void = debug ? Logger.debug : Logger.log;
+	const logLevel = debugging ? 'debug' : 'info';
+
+	return (_target: any, key: string, descriptor: PropertyDescriptor & Record<string, any>) => {
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 		let fn: Function | undefined;
 		let fnKey: string | undefined;
 		if (typeof descriptor.value === 'function') {
@@ -99,46 +102,30 @@ export function log<T extends (...arg: any) => any>(
 		}
 		if (fn == null || fnKey == null) throw new Error('Not supported');
 
-		const parameters = getParameters(fn);
+		const parameters = overrides !== false ? getParameters(fn) : [];
 
 		descriptor[fnKey] = function (this: any, ...args: Parameters<T>) {
-			const correlationId = getNextCorrelationId();
-
-			if (
-				(!Logger.isDebugging &&
-					Logger.level !== TraceLevel.Debug &&
-					!(Logger.level === TraceLevel.Verbose && !options.debug)) ||
-				(typeof options.condition === 'function' && !options.condition(...args))
-			) {
-				return fn!.apply(this, args);
+			if ((!debugging && !Logger.enabled(logLevel)) || (ifFn != null && !ifFn.apply(this, args))) {
+				return fn.apply(this, args);
 			}
 
-			let instanceName: string;
-			if (this != null) {
-				instanceName = Logger.toLoggableName(this);
-				// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-				if (this.constructor?.[LogInstanceNameFn]) {
-					instanceName = target.constructor[LogInstanceNameFn](this, instanceName);
-				}
-			} else {
-				instanceName = emptyStr;
-			}
+			const prevScopeId = logScopeIdGenerator.current;
+			const scopeId = logScopeIdGenerator.next();
 
-			let { correlate } = options;
-			if (!correlate && options.timed) {
-				correlate = true;
-			}
+			const instanceName = this != null ? getLoggableName(this) : undefined;
 
-			let prefix = `${correlate ? `[${correlationId.toString(16)}] ` : emptyStr}${
-				instanceName ? `${instanceName}.` : emptyStr
-			}${key}`;
+			let prefix = instanceName
+				? scoped
+					? `${getLoggableScopeBlock(scopeId, prevScopeId)} ${instanceName}.${key}`
+					: `${instanceName}.${key}`
+				: key;
 
-			if (options.prefix != null) {
-				prefix = options.prefix(
+			if (prefixFn != null) {
+				prefix = prefixFn(
 					{
-						id: correlationId,
+						id: scopeId,
 						instance: this,
-						instanceName: instanceName,
+						instanceName: instanceName ?? '',
 						name: key,
 						prefix: prefix,
 					},
@@ -146,130 +133,155 @@ export function log<T extends (...arg: any) => any>(
 				);
 			}
 
-			let correlationContext: LogCorrelationContext | undefined;
-			if (correlate) {
-				correlationContext = { correlationId: correlationId, prefix: prefix };
-				setCorrelationContext(correlationId, correlationContext);
+			let scope: LogScope | undefined;
+			if (scoped) {
+				scope = setLogScope(scopeId, { scopeId: scopeId, prevScopeId: prevScopeId, prefix: prefix });
 			}
 
-			const enter = options.enter != null ? options.enter(...args) : emptyStr;
+			const enter = enterFn != null ? enterFn(...args) : '';
 
 			let loggableParams: string;
-			if (options.args === false || args.length === 0) {
-				loggableParams = emptyStr;
+			if (overrides === false || args.length === 0) {
+				loggableParams = '';
 
-				if (!options.singleLine) {
-					logFn(`${prefix}${enter}`);
+				if (!singleLine) {
+					logFn.call(Logger, `${prefix}${enter}`);
 				}
 			} else {
-				const argFns = typeof options.args === 'object' ? options.args : undefined;
-				let argFn;
-				let loggable;
-				loggableParams = filterMap(args, (v: any, index: number) => {
-					const p = parameters[index];
+				loggableParams = '';
 
-					argFn = argFns !== undefined ? argFns[index] : undefined;
-					if (argFn !== undefined) {
-						loggable = argFn(v);
-						if (loggable === false) return undefined;
+				let paramOverride;
+				let paramIndex = -1;
+				let paramName;
+				let paramLogValue;
+				let paramValue;
+
+				for (paramValue of args as unknown[]) {
+					paramName = parameters[++paramIndex];
+
+					paramOverride = overrides?.[paramIndex];
+					if (paramOverride != null) {
+						if (typeof paramOverride === 'boolean') continue;
+
+						if (loggableParams.length > 0) {
+							loggableParams += ', ';
+						}
+
+						if (typeof paramOverride === 'string') {
+							loggableParams += paramOverride;
+							continue;
+						}
+
+						paramLogValue = String(paramOverride(paramValue));
 					} else {
-						loggable = Logger.toLoggable(v, options.sanitize);
+						if (loggableParams.length > 0) {
+							loggableParams += ', ';
+						}
+
+						paramLogValue = Logger.toLoggable(paramValue);
 					}
 
-					return p ? `${p}=${loggable}` : loggable;
-				}).join(', ');
+					loggableParams += paramName ? `${paramName}=${paramLogValue}` : paramLogValue;
+				}
 
-				if (!options.singleLine) {
-					if (!options.debug) {
-						Logger.logWithDebugParams(`${prefix}${enter}`, loggableParams);
-					} else {
-						logFn(`${prefix}${enter}`, loggableParams);
-					}
+				if (!singleLine) {
+					logFn.call(Logger, loggableParams ? `${prefix}${enter}(${loggableParams})` : `${prefix}${enter}`);
 				}
 			}
 
-			if (options.singleLine || options.timed || options.exit != null) {
-				const start = options.timed ? process.hrtime() : undefined;
+			if (singleLine || timed || exitFn != null) {
+				const start = timed ? hrtime() : undefined;
 
-				const logError = (ex: Error) => {
-					const timing = start !== undefined ? ` \u2022 ${getDurationMilliseconds(start)} ms` : emptyStr;
-					if (options.singleLine) {
+				const logError = (ex: unknown) => {
+					const timing = start !== undefined ? ` [${getDurationMilliseconds(start)}ms]` : '';
+					if (singleLine) {
 						Logger.error(
 							ex,
-							`${prefix}${enter}`,
-							`failed${
-								correlationContext?.exitDetails ? correlationContext.exitDetails : emptyStr
-							}${timing}`,
-							loggableParams,
+							loggableParams ? `${prefix}${enter}(${loggableParams})` : `${prefix}${enter}`,
+							scope?.exitDetails ? `failed${scope.exitDetails}${timing}` : `failed${timing}`,
 						);
 					} else {
 						Logger.error(
 							ex,
 							prefix,
-							`failed${
-								correlationContext?.exitDetails ? correlationContext.exitDetails : emptyStr
-							}${timing}`,
+							scope?.exitDetails ? `failed${scope.exitDetails}${timing}` : `failed${timing}`,
 						);
 					}
 
-					if (correlate) {
-						clearCorrelationContext(correlationId);
+					if (scoped) {
+						clearLogScope(scopeId);
 					}
 				};
 
 				let result;
 				try {
-					result = fn!.apply(this, args);
+					result = fn.apply(this, args);
 				} catch (ex) {
 					logError(ex);
 					throw ex;
 				}
 
 				const logResult = (r: any) => {
-					const timing = start !== undefined ? ` \u2022 ${getDurationMilliseconds(start)} ms` : emptyStr;
-					let exit;
-					if (options.exit != null) {
-						try {
-							exit = options.exit(r);
-						} catch (ex) {
-							exit = `@log.exit error: ${ex}`;
+					let duration: number | undefined;
+					let exitLogFn: typeof logFn;
+					let timing;
+					if (start != null) {
+						duration = getDurationMilliseconds(start);
+						if (duration > slowCallWarningThreshold) {
+							exitLogFn = Logger.warn;
+							timing = ` [*${duration}ms] (slow)`;
+						} else {
+							exitLogFn = logFn;
+							timing = ` [${duration}ms]`;
 						}
+					} else {
+						timing = '';
+						exitLogFn = logFn;
+					}
+
+					let exit;
+					if (exitFn != null) {
+						if (typeof exitFn === 'function') {
+							try {
+								exit = exitFn(r);
+							} catch (ex) {
+								exit = `@log.exit error: ${ex}`;
+							}
+						} else if (exitFn === true) {
+							exit = `returned ${Logger.toLoggable(r)}`;
+						}
+					} else if (scope?.exitFailed) {
+						exit = scope.exitFailed;
+						exitLogFn = (message: string, ...params: any[]) => Logger.error(null, message, ...params);
 					} else {
 						exit = 'completed';
 					}
 
-					if (options.singleLine) {
-						if (!options.debug) {
-							Logger.logWithDebugParams(
-								`${prefix}${enter} ${exit}${
-									correlationContext?.exitDetails ? correlationContext.exitDetails : emptyStr
-								}${timing}`,
-								loggableParams,
-							);
-						} else {
-							logFn(
-								`${prefix}${enter} ${exit}${
-									correlationContext?.exitDetails ? correlationContext.exitDetails : emptyStr
-								}${timing}`,
-								loggableParams,
+					if (singleLine) {
+						if (logThreshold === 0 || duration! > logThreshold) {
+							exitLogFn.call(
+								Logger,
+								loggableParams
+									? `${prefix}${enter}(${loggableParams}) ${exit}${scope?.exitDetails || ''}${timing}`
+									: `${prefix}${enter} ${exit}${scope?.exitDetails || ''}${timing}`,
 							);
 						}
 					} else {
-						logFn(
-							`${prefix} ${exit}${
-								correlationContext?.exitDetails ? correlationContext.exitDetails : emptyStr
-							}${timing}`,
+						exitLogFn.call(
+							Logger,
+							loggableParams
+								? `${prefix}(${loggableParams}) ${exit}${scope?.exitDetails || ''}${timing}`
+								: `${prefix} ${exit}${scope?.exitDetails || ''}${timing}`,
 						);
 					}
 
-					if (correlate) {
-						clearCorrelationContext(correlationId);
+					if (scoped) {
+						clearLogScope(scopeId);
 					}
 				};
 
 				if (result != null && isPromise(result)) {
-					const promise = result.then(logResult);
-					promise.catch(logError);
+					result.then(logResult, logError);
 				} else {
 					logResult(result);
 				}
@@ -277,7 +289,7 @@ export function log<T extends (...arg: any) => any>(
 				return result;
 			}
 
-			return fn!.apply(this, args);
+			return fn.apply(this, args);
 		};
 	};
 }

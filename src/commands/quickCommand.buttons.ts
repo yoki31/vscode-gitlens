@@ -1,5 +1,5 @@
-'use strict';
-import { QuickInput, QuickInputButton, ThemeIcon, Uri } from 'vscode';
+import type { QuickInput, QuickInputButton } from 'vscode';
+import { ThemeIcon, Uri } from 'vscode';
 import { Container } from '../container';
 
 export class ToggleQuickInputButton implements QuickInputButton {
@@ -20,8 +20,8 @@ export class ToggleQuickInputButton implements QuickInputButton {
 		const icon = this.getToggledState().icon;
 		return typeof icon === 'string'
 			? {
-					dark: Uri.file(Container.context.asAbsolutePath(`images/dark/${icon}.svg`)),
-					light: Uri.file(Container.context.asAbsolutePath(`images/light/${icon}.svg`)),
+					dark: Uri.file(Container.instance.context.asAbsolutePath(`images/dark/${icon}.svg`)),
+					light: Uri.file(Container.instance.context.asAbsolutePath(`images/light/${icon}.svg`)),
 			  }
 			: icon;
 	}
@@ -37,6 +37,9 @@ export class ToggleQuickInputButton implements QuickInputButton {
 		this._on = value;
 	}
 
+	/**
+	 * @returns `true` if the step should be retried (refreshed)
+	 */
 	onDidClick?(quickInput: QuickInput): boolean | void | Promise<boolean | void>;
 
 	private getState() {
@@ -54,101 +57,191 @@ export class SelectableQuickInputButton extends ToggleQuickInputButton {
 	}
 }
 
-export namespace QuickCommandButtons {
-	export const Fetch: QuickInputButton = {
-		iconPath: new ThemeIcon('sync'),
-		tooltip: 'Fetch',
-	};
+export const ClearQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('clear-all'),
+	tooltip: 'Clear',
+};
 
-	export const LoadMore: QuickInputButton = {
-		iconPath: new ThemeIcon('refresh'),
-		tooltip: 'Load More',
-	};
+export const ConnectIntegrationButton: QuickInputButton = {
+	iconPath: new ThemeIcon('plug'),
+	tooltip: 'Connect Additional Integrations',
+};
 
-	export const MatchCaseToggle = class extends SelectableQuickInputButton {
-		constructor(on = false) {
-			super('Match Case', { off: 'icon-match-case', on: 'icon-match-case-selected' }, on);
-		}
-	};
+export const FeedbackQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('feedback'),
+	tooltip: 'Give Us Feedback',
+};
 
-	export const MatchAllToggle = class extends SelectableQuickInputButton {
-		constructor(on = false) {
-			super('Match All', { off: 'icon-match-all', on: 'icon-match-all-selected' }, on);
-		}
-	};
+export const FetchQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('gitlens-repo-fetch'),
+	tooltip: 'Fetch',
+};
 
-	export const MatchRegexToggle = class extends SelectableQuickInputButton {
-		constructor(on = false) {
-			super('Match using Regular Expressions', { off: 'icon-match-regex', on: 'icon-match-regex-selected' }, on);
-		}
-	};
+export const LoadMoreQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('refresh'),
+	tooltip: 'Load More',
+};
 
-	export const PickCommitToggle = class extends ToggleQuickInputButton {
-		constructor(on = false, context: { showTags: boolean }, onDidClick?: (quickInput: QuickInput) => void) {
-			super(
-				() => ({
-					on: { tooltip: 'Choose a Specific Commit', icon: new ThemeIcon('git-commit') },
-					off: {
-						tooltip: `Choose a Branch${context.showTags ? ' or Tag' : ''}`,
-						icon: new ThemeIcon('git-branch'),
-					},
-				}),
-				on,
-			);
+export const MatchCaseToggleQuickInputButton = class extends SelectableQuickInputButton {
+	constructor(on = false) {
+		super('Match Case', { off: 'icon-match-case', on: 'icon-match-case-selected' }, on);
+	}
+};
 
-			this.onDidClick = onDidClick;
-		}
-	};
+export const MatchAllToggleQuickInputButton = class extends SelectableQuickInputButton {
+	constructor(on = false) {
+		super('Match All', { off: 'icon-match-all', on: 'icon-match-all-selected' }, on);
+	}
+};
 
-	export const RevealInSideBar: QuickInputButton = {
-		iconPath: new ThemeIcon('eye'),
-		tooltip: 'Reveal in Side Bar',
-	};
+export const MatchRegexToggleQuickInputButton = class extends SelectableQuickInputButton {
+	constructor(on = false) {
+		super('Match using Regular Expressions', { off: 'icon-match-regex', on: 'icon-match-regex-selected' }, on);
+	}
+};
 
-	export const SearchInSideBar: QuickInputButton = {
-		iconPath: new ThemeIcon('search'),
-		tooltip: 'Search in Side Bar',
-	};
+export const PickCommitQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('git-commit'),
+	tooltip: 'Choose a Specific Commit',
+};
 
-	export const ShowResultsInSideBar: QuickInputButton = {
-		iconPath: new ThemeIcon('link-external'),
-		tooltip: 'Show Results in Side Bar',
-	};
+export const PickCommitToggleQuickInputButton = class extends ToggleQuickInputButton {
+	constructor(on = false, context: { showTags: boolean }, onDidClick?: (quickInput: QuickInput) => void) {
+		super(
+			() => ({
+				on: { tooltip: 'Choose a Specific Commit', icon: new ThemeIcon('git-commit') },
+				off: {
+					tooltip: `Choose a Branch${context.showTags ? ' or Tag' : ''}`,
+					icon: new ThemeIcon('git-branch'),
+				},
+			}),
+			on,
+		);
 
-	export const ShowTagsToggle = class extends SelectableQuickInputButton {
-		constructor(on = false) {
-			super('Show Tags', { off: new ThemeIcon('tag'), on: 'icon-tag-selected' }, on);
-		}
-	};
+		this.onDidClick = onDidClick;
+	}
+};
 
-	export const WillConfirmForced: QuickInputButton = {
-		iconPath: new ThemeIcon('check'),
-		tooltip: 'Will always confirm',
-	};
+export const LearnAboutProQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('info'),
+	tooltip: 'Learn about GitLens Pro',
+};
 
-	export const WillConfirmToggle = class extends ToggleQuickInputButton {
-		constructor(on = false, onDidClick?: (quickInput: QuickInput) => void) {
-			super(
-				() => ({
-					on: {
-						tooltip: 'Will confirm',
-						icon: {
-							dark: Uri.file(Container.context.asAbsolutePath('images/dark/icon-check.svg')),
-							light: Uri.file(Container.context.asAbsolutePath('images/light/icon-check.svg')),
-						},
-					},
-					off: {
-						tooltip: 'Skips confirm',
-						icon: {
-							dark: Uri.file(Container.context.asAbsolutePath('images/dark/icon-no-check.svg')),
-							light: Uri.file(Container.context.asAbsolutePath('images/light/icon-no-check.svg')),
-						},
-					},
-				}),
-				on,
-			);
+export const MergeQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('merge'),
+	tooltip: 'Merge...',
+};
 
-			this.onDidClick = onDidClick;
-		}
-	};
-}
+export const OpenOnGitHubQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('globe'),
+	tooltip: 'Open on GitHub',
+};
+
+export const OpenOnGitLabQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('globe'),
+	tooltip: 'Open on GitLab',
+};
+
+export const OpenOnWebQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('globe'),
+	tooltip: 'Open on gitkraken.dev',
+};
+
+export const LaunchpadSettingsQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('gear'),
+	tooltip: 'Launchpad Settings',
+};
+
+export const PinQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('pinned'),
+	tooltip: 'Pin',
+};
+
+export const UnpinQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('pin'),
+	tooltip: 'Unpin',
+};
+
+export const SnoozeQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('bell-slash'),
+	tooltip: 'Snooze',
+};
+
+export const RefreshQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('refresh'),
+	tooltip: 'Refresh',
+};
+
+export const UnsnoozeQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('bell'),
+	tooltip: 'Unsnooze',
+};
+export const OpenInNewWindowQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('empty-window'),
+	tooltip: 'Open in New Window',
+};
+
+export const RevealInSideBarQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('search'),
+	tooltip: 'Reveal in Side Bar',
+};
+
+export const SetRemoteAsDefaultQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('settings-gear'),
+	tooltip: 'Set as Default Remote',
+};
+
+export const ShowDetailsViewQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('eye'),
+	tooltip: 'Inspect Details',
+};
+
+export const OpenChangesViewQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('compare-changes'),
+	tooltip: 'Open Changes',
+};
+
+export const ShowResultsInSideBarQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('link-external'),
+	tooltip: 'Show Results in Side Bar',
+};
+
+export const OpenWorktreeInNewWindowQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('empty-window'),
+	tooltip: 'Open in Worktree',
+};
+
+export const ShowTagsToggleQuickInputButton = class extends SelectableQuickInputButton {
+	constructor(on = false) {
+		super('Show Tags', { off: new ThemeIcon('tag'), on: 'icon-tag-selected' }, on);
+	}
+};
+
+export const WillConfirmForcedQuickInputButton: QuickInputButton = {
+	iconPath: new ThemeIcon('gitlens-confirm-checked'),
+	tooltip: 'You will be presented with a required confirmation step before the action is performed',
+};
+
+export const WillConfirmToggleQuickInputButton = class extends ToggleQuickInputButton {
+	constructor(on = false, isConfirmationStep: boolean, onDidClick?: (quickInput: QuickInput) => void) {
+		super(
+			() => ({
+				on: {
+					tooltip: isConfirmationStep
+						? 'For future actions, you will be presented with confirmation step before the action is performed\nClick to toggle'
+						: 'You will be presented with confirmation step before the action is performed\nClick to toggle',
+					icon: new ThemeIcon('gitlens-confirm-checked'),
+				},
+				off: {
+					tooltip: isConfirmationStep
+						? "For future actions, you won't be presented with confirmation step before the action is performed\nClick to toggle"
+						: "You won't be presented with confirmation step before the action is performed\nClick to toggle",
+					icon: new ThemeIcon('gitlens-confirm-unchecked'),
+				},
+			}),
+			on,
+		);
+
+		this.onDidClick = onDidClick;
+	}
+};

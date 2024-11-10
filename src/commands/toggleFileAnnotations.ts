@@ -1,55 +1,47 @@
-'use strict';
-import { TextEditor, TextEditorEdit, Uri, window } from 'vscode';
-import { AnnotationContext } from '../annotations/annotationProvider';
-import { ChangesAnnotationContext } from '../annotations/gutterChangesAnnotationProvider';
-import { UriComparer } from '../comparers';
-import { FileAnnotationType } from '../configuration';
-import { isTextEditor } from '../constants';
-import { Container } from '../container';
-import { Logger } from '../logger';
-import { Messages } from '../messages';
-import { ActiveEditorCommand, command, Commands, EditorCommand } from './common';
+import type { TextEditor, TextEditorEdit, Uri } from 'vscode';
+import type { AnnotationContext } from '../annotations/annotationProvider';
+import type { ChangesAnnotationContext } from '../annotations/gutterChangesAnnotationProvider';
+import { Commands } from '../constants.commands';
+import type { Container } from '../container';
+import { showGenericErrorMessage } from '../messages';
+import { Logger } from '../system/logger';
+import { command } from '../system/vscode/command';
+import { getEditorIfVisible, isTrackableTextEditor } from '../system/vscode/utils';
+import { ActiveEditorCommand, EditorCommand } from './base';
 
 @command()
 export class ClearFileAnnotationsCommand extends EditorCommand {
-	constructor() {
+	constructor(private readonly container: Container) {
 		super([Commands.ClearFileAnnotations, Commands.ComputingFileAnnotations]);
 	}
 
-	async execute(editor: TextEditor, edit: TextEditorEdit, uri?: Uri): Promise<void> {
-		// Handle the case where we are focused on a non-editor editor (output, debug console)
-		if (editor != null && !isTextEditor(editor)) {
-			if (uri != null && !UriComparer.equals(uri, editor.document.uri)) {
-				const e = window.visibleTextEditors.find(e => UriComparer.equals(uri, e.document.uri));
-				if (e != null) {
-					editor = e;
-				}
-			}
-		}
+	async execute(editor: TextEditor | undefined, _edit: TextEditorEdit, uri?: Uri): Promise<void> {
+		editor = getValidEditor(editor, uri);
+		if (editor == null) return;
 
 		try {
-			void (await Container.fileAnnotations.clear(editor));
+			await this.container.fileAnnotations.clear(editor);
 		} catch (ex) {
 			Logger.error(ex, 'ClearFileAnnotationsCommand');
-			void Messages.showGenericErrorMessage('Unable to clear file annotations');
+			void showGenericErrorMessage('Unable to clear file annotations');
 		}
 	}
 }
 
 export interface ToggleFileBlameAnnotationCommandArgs {
-	type: FileAnnotationType.Blame;
+	type: 'blame';
 	context?: AnnotationContext;
 	on?: boolean;
 }
 
 export interface ToggleFileChangesAnnotationCommandArgs {
-	type: FileAnnotationType.Changes;
+	type: 'changes';
 	context?: ChangesAnnotationContext;
 	on?: boolean;
 }
 
 export interface ToggleFileHeatmapAnnotationCommandArgs {
-	type: FileAnnotationType.Heatmap;
+	type: 'heatmap';
 	context?: AnnotationContext;
 	on?: boolean;
 }
@@ -61,35 +53,35 @@ export type ToggleFileAnnotationCommandArgs =
 
 @command()
 export class ToggleFileBlameCommand extends ActiveEditorCommand {
-	constructor() {
+	constructor(private readonly container: Container) {
 		super([Commands.ToggleFileBlame, Commands.ToggleFileBlameInDiffLeft, Commands.ToggleFileBlameInDiffRight]);
 	}
 
 	execute(editor: TextEditor, uri?: Uri, args?: ToggleFileBlameAnnotationCommandArgs): Promise<void> {
-		return toggleFileAnnotations<ToggleFileBlameAnnotationCommandArgs>(editor, uri, {
+		return toggleFileAnnotations<ToggleFileBlameAnnotationCommandArgs>(this.container, editor, uri, {
 			...args,
-			type: FileAnnotationType.Blame,
+			type: 'blame',
 		});
 	}
 }
 
 @command()
 export class ToggleFileChangesCommand extends ActiveEditorCommand {
-	constructor() {
+	constructor(private readonly container: Container) {
 		super(Commands.ToggleFileChanges);
 	}
 
 	execute(editor: TextEditor, uri?: Uri, args?: ToggleFileChangesAnnotationCommandArgs): Promise<void> {
-		return toggleFileAnnotations<ToggleFileChangesAnnotationCommandArgs>(editor, uri, {
+		return toggleFileAnnotations<ToggleFileChangesAnnotationCommandArgs>(this.container, editor, uri, {
 			...args,
-			type: FileAnnotationType.Changes,
+			type: 'changes',
 		});
 	}
 }
 
 @command()
 export class ToggleFileHeatmapCommand extends ActiveEditorCommand {
-	constructor() {
+	constructor(private readonly container: Container) {
 		super([
 			Commands.ToggleFileHeatmap,
 			Commands.ToggleFileHeatmapInDiffLeft,
@@ -98,32 +90,25 @@ export class ToggleFileHeatmapCommand extends ActiveEditorCommand {
 	}
 
 	execute(editor: TextEditor, uri?: Uri, args?: ToggleFileHeatmapAnnotationCommandArgs): Promise<void> {
-		return toggleFileAnnotations<ToggleFileHeatmapAnnotationCommandArgs>(editor, uri, {
+		return toggleFileAnnotations<ToggleFileHeatmapAnnotationCommandArgs>(this.container, editor, uri, {
 			...args,
-			type: FileAnnotationType.Heatmap,
+			type: 'heatmap',
 		});
 	}
 }
 
 async function toggleFileAnnotations<TArgs extends ToggleFileAnnotationCommandArgs>(
-	editor: TextEditor,
+	container: Container,
+	editor: TextEditor | undefined,
 	uri: Uri | undefined,
 	args: TArgs,
 ): Promise<void> {
-	// Handle the case where we are focused on a non-editor editor (output, debug console)
-	if (editor != null && !isTextEditor(editor)) {
-		if (uri != null && !UriComparer.equals(uri, editor.document.uri)) {
-			const e = window.visibleTextEditors.find(e => UriComparer.equals(uri, e.document.uri));
-			if (e != null) {
-				editor = e;
-			}
-		}
-	}
+	editor = getValidEditor(editor, uri);
 
 	try {
-		args = { type: FileAnnotationType.Blame, ...(args as any) };
+		args = { type: 'blame', ...(args as any) };
 
-		void (await Container.fileAnnotations.toggle(
+		void (await container.fileAnnotations.toggle(
 			editor,
 			args.type,
 			{
@@ -134,8 +119,22 @@ async function toggleFileAnnotations<TArgs extends ToggleFileAnnotationCommandAr
 		));
 	} catch (ex) {
 		Logger.error(ex, 'ToggleFileAnnotationsCommand');
-		void window.showErrorMessage(
-			`Unable to toggle file ${args.type} annotations. See output channel for more details`,
-		);
+		void showGenericErrorMessage(`Unable to toggle file ${args.type} annotations`);
 	}
+}
+
+function getValidEditor(editor: TextEditor | undefined, uri: Uri | undefined) {
+	// Handle the case where we are focused on a non-editor editor (output, debug console) or focused on another editor, but executing an action on another editor
+	if (editor != null && !isTrackableTextEditor(editor)) {
+		editor = undefined;
+	}
+
+	if (uri != null && (editor == null || editor.document.uri.toString() !== uri.toString())) {
+		const e = getEditorIfVisible(uri);
+		if (e != null) {
+			editor = e;
+		}
+	}
+
+	return editor;
 }

@@ -1,32 +1,31 @@
-'use strict';
-import {
-	CancellationToken,
-	CancellationTokenSource,
-	ConfigurationChangeEvent,
-	DecorationOptions,
-	DecorationRangeBehavior,
-	Disposable,
-	Range,
-	TextEditor,
-	TextEditorDecorationType,
-	window,
-} from 'vscode';
-import { configuration } from '../configuration';
-import { GlyphChars, isTextEditor } from '../constants';
-import { Container } from '../container';
-import { Authentication, CommitFormatter, GitBlameCommit, PullRequest } from '../git/git';
-import { LogCorrelationContext, Logger } from '../logger';
-import { debug, Iterables, log, Promises } from '../system';
-import { LinesChangeEvent, LineSelection } from '../trackers/gitLineTracker';
-import { Annotations } from './annotations';
+import type { ConfigurationChangeEvent, DecorationOptions, TextEditor, TextEditorDecorationType } from 'vscode';
+import { CancellationTokenSource, DecorationRangeBehavior, Disposable, Range, window } from 'vscode';
+import { GlyphChars, Schemes } from '../constants';
+import type { Container } from '../container';
+import { CommitFormatter } from '../git/formatters/commitFormatter';
+import type { PullRequest } from '../git/models/pullRequest';
+import { detailsMessage } from '../hovers/hovers';
+import { debug, log } from '../system/decorators/log';
+import { once } from '../system/event';
+import { debounce } from '../system/function';
+import { Logger } from '../system/logger';
+import { getLogScope, setLogScopeExit } from '../system/logger.scope';
+import type { MaybePausedResult } from '../system/promise';
+import { getSettledValue, pauseOnCancelOrTimeoutMap } from '../system/promise';
+import { configuration } from '../system/vscode/configuration';
+import { isTrackableTextEditor } from '../system/vscode/utils';
+import type { LinesChangeEvent, LineState } from '../trackers/lineTracker';
+import { getInlineDecoration } from './annotations';
+import type { BlameFontOptions } from './gutterBlameAnnotationProvider';
 
 const annotationDecoration: TextEditorDecorationType = window.createTextEditorDecorationType({
 	after: {
 		margin: '0 0 0 3em',
 		textDecoration: 'none',
 	},
-	rangeBehavior: DecorationRangeBehavior.ClosedOpen,
+	rangeBehavior: DecorationRangeBehavior.OpenOpen,
 });
+const maxSmallIntegerV8 = 2 ** 30 - 1; // Max number that can be stored in V8's smis (small integers)
 
 export class LineAnnotationController implements Disposable {
 	private _cancellation: CancellationTokenSource | undefined;
@@ -34,27 +33,33 @@ export class LineAnnotationController implements Disposable {
 	private _editor: TextEditor | undefined;
 	private _enabled: boolean = false;
 
-	constructor() {
+	constructor(private readonly container: Container) {
 		this._disposable = Disposable.from(
+			once(container.onReady)(this.onReady, this),
 			configuration.onDidChange(this.onConfigurationChanged, this),
-			Container.fileAnnotations.onDidToggleAnnotations(this.onFileAnnotationsToggled, this),
-			Authentication.onDidChange(() => void this.refresh(window.activeTextEditor)),
+			container.fileAnnotations.onDidToggleAnnotations(this.onFileAnnotationsToggled, this),
+			container.integrations.onDidChangeConnectionState(
+				debounce(() => void this.refresh(window.activeTextEditor), 250),
+			),
 		);
-		this.onConfigurationChanged();
 	}
 
 	dispose() {
 		this.clearAnnotations(this._editor);
 
-		Container.lineTracker.stop(this);
+		this.container.lineTracker.unsubscribe(this);
 		this._disposable.dispose();
+	}
+
+	private onReady(): void {
+		this.onConfigurationChanged();
 	}
 
 	private onConfigurationChanged(e?: ConfigurationChangeEvent) {
 		if (!configuration.changed(e, 'currentLine')) return;
 
 		if (configuration.changed(e, 'currentLine.enabled')) {
-			if (Container.config.currentLine.enabled) {
+			if (configuration.get('currentLine.enabled')) {
 				this._enabled = true;
 				this.resume();
 			} else {
@@ -145,46 +150,40 @@ export class LineAnnotationController implements Disposable {
 		editor.setDecorations(annotationDecoration, []);
 	}
 
-	private async getPullRequests(
+	private getPullRequestsForLines(
 		repoPath: string,
-		lines: [number, GitBlameCommit][],
-		{ timeout }: { timeout?: number } = {},
-	) {
-		if (lines.length === 0) return undefined;
+		lines: Map<number, LineState>,
+	): Map<string, Promise<PullRequest | undefined>> {
+		const prs = new Map<string, Promise<PullRequest | undefined>>();
+		if (lines.size === 0) return prs;
 
-		const remote = await Container.git.getRichRemoteProvider(repoPath);
-		if (remote?.provider == null) return undefined;
+		const remotePromise = this.container.git.getBestRemoteWithIntegration(repoPath);
 
-		const refs = new Set<string>();
+		for (const [, state] of lines) {
+			if (state.commit.isUncommitted) continue;
 
-		for (const [, commit] of lines) {
-			refs.add(commit.ref);
+			let pr = prs.get(state.commit.ref);
+			if (pr == null) {
+				pr = remotePromise.then(remote => state.commit.getAssociatedPullRequest(remote));
+				prs.set(state.commit.ref, pr);
+			}
 		}
-
-		if (refs.size === 0) return undefined;
-
-		const { provider } = remote;
-		const prs = await Promises.raceAll(
-			refs.values(),
-			ref => Container.git.getPullRequestForCommit(ref, provider),
-			timeout,
-		);
-		if (prs.size === 0 || Iterables.every(prs.values(), pr => pr == null)) return undefined;
 
 		return prs;
 	}
 
-	@debug({ args: false })
-	private async refresh(editor: TextEditor | undefined, options?: { prs?: Map<string, PullRequest | undefined> }) {
+	@debug()
+	private async refresh(editor: TextEditor | undefined) {
 		if (editor == null && this._editor == null) return;
 
-		const cc = Logger.getCorrelationContext();
+		const scope = getLogScope();
 
-		const selections = Container.lineTracker.selections;
-		if (editor == null || selections == null || !isTextEditor(editor)) {
-			if (cc != null) {
-				cc.exitDetails = ` ${GlyphChars.Dot} Skipped because there is no valid editor or no valid selections`;
-			}
+		const selections = this.container.lineTracker.selections;
+		if (editor == null || selections == null || !isTrackableTextEditor(editor)) {
+			setLogScopeExit(
+				scope,
+				` ${GlyphChars.Dot} Skipped because there is no valid editor or no valid selections`,
+			);
 
 			this.clear(this._editor);
 			return;
@@ -197,68 +196,82 @@ export class LineAnnotationController implements Disposable {
 			this._editor = editor;
 		}
 
-		const cfg = Container.config.currentLine;
+		const cfg = configuration.get('currentLine');
 		if (this.suspended) {
-			if (cc != null) {
-				cc.exitDetails = ` ${GlyphChars.Dot} Skipped because the controller is suspended`;
-			}
+			setLogScopeExit(scope, ` ${GlyphChars.Dot} Skipped because the controller is suspended`);
 
 			this.clear(editor);
 			return;
 		}
 
-		const trackedDocument = await Container.tracker.getOrAdd(editor.document);
-		if (!trackedDocument.isBlameable && this.suspended) {
-			if (cc != null) {
-				cc.exitDetails = ` ${GlyphChars.Dot} Skipped because the ${
-					this.suspended
-						? 'controller is suspended'
-						: `document(${trackedDocument.uri.toString(true)}) is not blameable`
-				}`;
-			}
+		const trackedDocument = await this.container.documentTracker.getOrAdd(editor.document);
+		const status = await trackedDocument?.getStatus();
+		if (!status?.blameable && this.suspended) {
+			setLogScopeExit(
+				scope,
+				` ${GlyphChars.Dot} Skipped because the ${
+					this.suspended ? 'controller is suspended' : 'document is not blameable'
+				}`,
+			);
 
 			this.clear(editor);
 			return;
 		}
 
 		// Make sure the editor hasn't died since the await above and that we are still on the same line(s)
-		if (editor.document == null || !Container.lineTracker.includes(selections)) {
-			if (cc != null) {
-				cc.exitDetails = ` ${GlyphChars.Dot} Skipped because the ${
+		if (editor.document == null || !this.container.lineTracker.includes(selections)) {
+			setLogScopeExit(
+				scope,
+				` ${GlyphChars.Dot} Skipped because the ${
 					editor.document == null
 						? 'editor is gone'
-						: `selection(s)=${selections
-								.map(s => `[${s.anchor}-${s.active}]`)
-								.join()} are no longer current`
-				}`;
-			}
+						: `selection=${selections.map(s => `[${s.anchor}-${s.active}]`).join()} are no longer current`
+				}`,
+			);
 			return;
 		}
 
-		if (cc != null) {
-			cc.exitDetails = ` ${GlyphChars.Dot} selection(s)=${selections
-				.map(s => `[${s.anchor}-${s.active}]`)
-				.join()}`;
+		setLogScopeExit(
+			scope,
+			` ${GlyphChars.Dot} selection=${selections.map(s => `[${s.anchor}-${s.active}]`).join()}`,
+		);
+
+		let uncommittedOnly = true;
+
+		const commitPromises = new Map<string, Promise<void>>();
+		const lines = new Map<number, LineState>();
+		for (const selection of selections) {
+			const state = this.container.lineTracker.getState(selection.active);
+			if (state?.commit == null) {
+				Logger.debug(scope, `Line ${selection.active} returned no commit`);
+				continue;
+			}
+
+			if (state.commit.message == null && !commitPromises.has(state.commit.ref)) {
+				commitPromises.set(state.commit.ref, state.commit.ensureFullDetails());
+			}
+			lines.set(selection.active, state);
+			if (!state.commit.isUncommitted) {
+				uncommittedOnly = false;
+			}
 		}
-
-		const commitLines = [
-			...Iterables.filterMap<LineSelection, [number, GitBlameCommit]>(selections, selection => {
-				const state = Container.lineTracker.getState(selection.active);
-				if (state?.commit == null) {
-					Logger.debug(cc, `Line ${selection.active} returned no commit`);
-					return undefined;
-				}
-
-				return [selection.active, state.commit];
-			}),
-		];
 
 		const repoPath = trackedDocument.uri.repoPath;
 
-		// TODO: Make this configurable?
-		const timeout = 100;
-		const [getBranchAndTagTips, prs] = await Promise.all([
-			CommitFormatter.has(cfg.format, 'tips') ? Container.git.getBranchesAndTagsTipsFn(repoPath) : undefined,
+		let hoverOptions: RequireSome<Parameters<typeof detailsMessage>[4], 'autolinks' | 'pullRequests'> | undefined;
+		// Live Share (vsls schemes) don't support `languages.registerHoverProvider` so we'll need to add them to the decoration directly
+		if (editor.document.uri.scheme === Schemes.Vsls || editor.document.uri.scheme === Schemes.VslsScc) {
+			const hoverCfg = configuration.get('hovers');
+			hoverOptions = {
+				autolinks: hoverCfg.autolinks.enabled,
+				dateFormat: configuration.get('defaultDateFormat'),
+				format: hoverCfg.detailsMarkdownFormat,
+				pullRequests: hoverCfg.pullRequests.enabled,
+			};
+		}
+
+		const getPullRequests =
+			!uncommittedOnly &&
 			repoPath != null &&
 			cfg.pullRequests.enabled &&
 			CommitFormatter.has(
@@ -268,88 +281,131 @@ export class LineAnnotationController implements Disposable {
 				'pullRequestAgoOrDate',
 				'pullRequestDate',
 				'pullRequestState',
-			)
-				? options?.prs ??
-				  this.getPullRequests(
-						repoPath,
-						commitLines.filter(([, commit]) => !commit.isUncommitted),
-						{ timeout: timeout },
-				  )
-				: undefined,
-		]);
-
-		if (prs != null) {
-			this._cancellation?.cancel();
-			this._cancellation = new CancellationTokenSource();
-			void this.waitForAnyPendingPullRequests(editor, prs, this._cancellation.token, timeout, cc);
-		}
-
-		const decorations = [];
-
-		for (const [l, commit] of commitLines) {
-			const decoration = Annotations.trailing(
-				commit,
-				// await GitUri.fromUri(editor.document.uri),
-				// l,
-				cfg.format,
-				{
-					dateFormat: cfg.dateFormat === null ? Container.config.defaultDateFormat : cfg.dateFormat,
-					getBranchAndTagTips: getBranchAndTagTips,
-					pullRequestOrRemote: prs?.get(commit.ref),
-					pullRequestPendingMessage: `PR ${GlyphChars.Ellipsis}`,
-				},
-				cfg.scrollable,
-			) as DecorationOptions;
-			decoration.range = editor.document.validateRange(
-				new Range(l, Number.MAX_SAFE_INTEGER, l, Number.MAX_SAFE_INTEGER),
 			);
 
-			decorations.push(decoration);
+		this._cancellation?.cancel();
+		this._cancellation = new CancellationTokenSource();
+		const cancellation = this._cancellation.token;
+
+		const getBranchAndTagTipsPromise = CommitFormatter.has(cfg.format, 'tips')
+			? this.container.git.getBranchesAndTagsTipsFn(repoPath)
+			: undefined;
+
+		async function updateDecorations(
+			container: Container,
+			editor: TextEditor,
+			getBranchAndTagTips: Awaited<typeof getBranchAndTagTipsPromise> | undefined,
+			prs: Map<string, MaybePausedResult<PullRequest | undefined>> | undefined,
+			timeout?: number,
+		) {
+			const fontOptions: BlameFontOptions = {
+				family: cfg.fontFamily,
+				size: cfg.fontSize,
+				style: cfg.fontStyle,
+				weight: cfg.fontWeight,
+			};
+
+			const decorations = [];
+
+			for (const [l, state] of lines) {
+				const commit = state.commit;
+				if (commit == null || (commit.isUncommitted && cfg.uncommittedChangesFormat === '')) continue;
+
+				const pr = prs?.get(commit.ref);
+
+				const decoration = getInlineDecoration(
+					commit,
+					// await GitUri.fromUri(editor.document.uri),
+					// l,
+					commit.isUncommitted ? cfg.uncommittedChangesFormat ?? cfg.format : cfg.format,
+					{
+						dateFormat: cfg.dateFormat === null ? configuration.get('defaultDateFormat') : cfg.dateFormat,
+						getBranchAndTagTips: getBranchAndTagTips,
+						pullRequest: pr?.value,
+						pullRequestPendingMessage: `PR ${GlyphChars.Ellipsis}`,
+					},
+					fontOptions,
+					cfg.scrollable,
+				) as DecorationOptions;
+				decoration.range = editor.document.validateRange(new Range(l, maxSmallIntegerV8, l, maxSmallIntegerV8));
+
+				if (hoverOptions != null) {
+					decoration.hoverMessage = await detailsMessage(container, commit, trackedDocument.uri, l, {
+						...hoverOptions,
+						pullRequest: pr?.value,
+						timeout: timeout,
+					});
+				}
+
+				decorations.push(decoration);
+			}
+
+			editor.setDecorations(annotationDecoration, decorations);
 		}
 
-		editor.setDecorations(annotationDecoration, decorations);
+		// TODO: Make this configurable?
+		const timeout = 100;
+		const prsResult = getPullRequests
+			? await pauseOnCancelOrTimeoutMap(
+					this.getPullRequestsForLines(repoPath, lines),
+					true,
+					cancellation,
+					timeout,
+					async result => {
+						if (
+							result.reason !== 'timedout' ||
+							cancellation.isCancellationRequested ||
+							editor !== this._editor
+						) {
+							return;
+						}
+
+						// If the PRs are taking too long, refresh the decorations once they complete
+
+						Logger.debug(
+							scope,
+							`${GlyphChars.Dot} pull request queries took too long (over ${timeout} ms)`,
+						);
+
+						const [getBranchAndTagTipsResult, prsResult] = await Promise.allSettled([
+							getBranchAndTagTipsPromise,
+							result.value,
+						]);
+
+						if (cancellation.isCancellationRequested || editor !== this._editor) return;
+
+						const prs = getSettledValue(prsResult);
+						const getBranchAndTagTips = getSettledValue(getBranchAndTagTipsResult);
+
+						Logger.debug(scope, `${GlyphChars.Dot} pull request queries completed; updating...`);
+
+						void updateDecorations(this.container, editor, getBranchAndTagTips, prs);
+					},
+			  )
+			: undefined;
+
+		const [getBranchAndTagTipsResult] = await Promise.allSettled([
+			getBranchAndTagTipsPromise,
+			...commitPromises.values(),
+		]);
+
+		if (cancellation.isCancellationRequested) return;
+
+		await updateDecorations(this.container, editor, getSettledValue(getBranchAndTagTipsResult), prsResult, 100);
 	}
 
 	private setLineTracker(enabled: boolean) {
 		if (enabled) {
-			if (!Container.lineTracker.isSubscribed(this)) {
-				Container.lineTracker.start(
+			if (!this.container.lineTracker.subscribed(this)) {
+				this.container.lineTracker.subscribe(
 					this,
-					Container.lineTracker.onDidChangeActiveLines(this.onActiveLinesChanged, this),
+					this.container.lineTracker.onDidChangeActiveLines(this.onActiveLinesChanged, this),
 				);
 			}
 
 			return;
 		}
 
-		Container.lineTracker.stop(this);
-	}
-
-	private async waitForAnyPendingPullRequests(
-		editor: TextEditor,
-		prs: Map<
-			string,
-			PullRequest | Promises.CancellationErrorWithId<string, Promise<PullRequest | undefined>> | undefined
-		>,
-		cancellationToken: CancellationToken,
-		timeout: number,
-		cc: LogCorrelationContext | undefined,
-	) {
-		// If there are any PRs that timed out, refresh the annotation(s) once they complete
-		const count = Iterables.count(prs.values(), pr => pr instanceof Promises.CancellationError);
-		if (cancellationToken.isCancellationRequested || count === 0) return;
-
-		Logger.debug(cc, `${GlyphChars.Dot} ${count} pull request queries took too long (over ${timeout} ms)`);
-
-		const resolved = new Map<string, PullRequest | undefined>();
-		for (const [key, value] of prs) {
-			resolved.set(key, value instanceof Promises.CancellationError ? await value.promise : value);
-		}
-
-		if (cancellationToken.isCancellationRequested || editor !== this._editor) return;
-
-		Logger.debug(cc, `${GlyphChars.Dot} ${count} pull request queries completed; refreshing...`);
-
-		void this.refresh(editor, { prs: resolved });
+		this.container.lineTracker.unsubscribe(this);
 	}
 }

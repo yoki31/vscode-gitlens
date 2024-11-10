@@ -1,107 +1,222 @@
-'use strict';
-import { GitRevision } from './git';
-import { GitRevisionReference } from './models/models';
+import type { SearchOperators, SearchOperatorsLongForm, SearchQuery } from '../constants.search';
+import { searchOperationRegex, searchOperatorsToLongFormMap } from '../constants.search';
+import type { StoredSearchQuery } from '../constants.storage';
+import type { GitRevisionReference } from './models/reference';
+import { isSha, shortenRevision } from './models/reference';
+import type { GitUser } from './models/user';
 
-export type SearchOperators =
-	| ''
-	| '=:'
-	| 'message:'
-	| '@:'
-	| 'author:'
-	| '#:'
-	| 'commit:'
-	| '?:'
-	| 'file:'
-	| '~:'
-	| 'change:';
+export interface GitSearchResultData {
+	date: number;
+	i: number;
+}
+export type GitSearchResults = Map<string, GitSearchResultData>;
 
-export const searchOperators = new Set<string>([
-	'',
-	'=:',
-	'message:',
-	'@:',
-	'author:',
-	'#:',
-	'commit:',
-	'?:',
-	'file:',
-	'~:',
-	'change:',
-]);
+export interface GitSearch {
+	repoPath: string;
+	query: SearchQuery;
+	comparisonKey: string;
+	results: GitSearchResults;
 
-export interface SearchPattern {
-	pattern: string;
-	matchAll?: boolean;
-	matchCase?: boolean;
-	matchRegex?: boolean;
+	readonly paging?: {
+		readonly limit: number | undefined;
+		readonly hasMore: boolean;
+	};
+
+	more?(limit: number): Promise<GitSearch>;
 }
 
-export namespace SearchPattern {
-	const normalizeSearchOperatorsMap = new Map<SearchOperators, SearchOperators>([
-		['', 'message:'],
-		['=:', 'message:'],
-		['message:', 'message:'],
-		['@:', 'author:'],
-		['author:', 'author:'],
-		['#:', 'commit:'],
-		['commit:', 'commit:'],
-		['?:', 'file:'],
-		['file:', 'file:'],
-		['~:', 'change:'],
-		['change:', 'change:'],
-	]);
+export function getSearchQuery(search: StoredSearchQuery): SearchQuery {
+	return {
+		query: search.pattern,
+		matchAll: search.matchAll,
+		matchCase: search.matchCase,
+		matchRegex: search.matchRegex,
+	};
+}
 
-	const searchOperationRegex =
-		/(?:(?<op>=:|message:|@:|author:|#:|commit:|\?:|file:|~:|change:)\s?(?<value>".+?"|\S+\b))|(?<text>\S+)(?!(?:=|message|@|author|#|commit|\?|file|~|change):)/gi;
+export function getStoredSearchQuery(search: SearchQuery): StoredSearchQuery {
+	return {
+		pattern: search.query,
+		matchAll: search.matchAll,
+		matchCase: search.matchCase,
+		matchRegex: search.matchRegex,
+	};
+}
 
-	export function fromCommit(ref: string): string;
-	export function fromCommit(commit: GitRevisionReference): string;
-	export function fromCommit(refOrCommit: string | GitRevisionReference) {
-		return `#:${typeof refOrCommit === 'string' ? GitRevision.shorten(refOrCommit) : refOrCommit.name}`;
-	}
+export function getSearchQueryComparisonKey(search: SearchQuery | StoredSearchQuery) {
+	return `${'query' in search ? search.query : search.pattern}|${search.matchAll ? 'A' : ''}${
+		search.matchCase ? 'C' : ''
+	}${search.matchRegex ? 'R' : ''}`;
+}
 
-	export function fromCommits(refs: string[]): string;
-	export function fromCommits(commits: GitRevisionReference[]): string;
-	export function fromCommits(refsOrCommits: (string | GitRevisionReference)[]) {
-		return refsOrCommits.map(r => `#:${typeof r === 'string' ? GitRevision.shorten(r) : r.name}`).join(' ');
-	}
+export function createSearchQueryForCommit(ref: string): string;
+export function createSearchQueryForCommit(commit: GitRevisionReference): string;
+export function createSearchQueryForCommit(refOrCommit: string | GitRevisionReference) {
+	return `#:${typeof refOrCommit === 'string' ? shortenRevision(refOrCommit) : refOrCommit.name}`;
+}
 
-	export function parseSearchOperations(search: string): Map<string, string[]> {
-		const operations = new Map<string, string[]>();
+export function createSearchQueryForCommits(refs: string[]): string;
+export function createSearchQueryForCommits(commits: GitRevisionReference[]): string;
+export function createSearchQueryForCommits(refsOrCommits: (string | GitRevisionReference)[]) {
+	return refsOrCommits.map(r => `#:${typeof r === 'string' ? shortenRevision(r) : r.name}`).join(' ');
+}
 
-		let op: SearchOperators | undefined;
-		let value: string | undefined;
-		let text: string | undefined;
+export function parseSearchQuery(search: SearchQuery): Map<SearchOperatorsLongForm, Set<string>> {
+	const operations = new Map<SearchOperatorsLongForm, Set<string>>();
 
-		let match;
-		do {
-			match = searchOperationRegex.exec(search);
-			if (match?.groups == null) break;
+	let op: SearchOperators | undefined;
+	let value: string | undefined;
+	let text: string | undefined;
 
-			op = normalizeSearchOperatorsMap.get(match.groups.op as SearchOperators);
-			({ value, text } = match.groups);
+	let match;
+	do {
+		match = searchOperationRegex.exec(search.query);
+		if (match?.groups == null) break;
 
-			if (text) {
-				op = GitRevision.isSha(text) ? 'commit:' : 'message:';
+		op = searchOperatorsToLongFormMap.get(match.groups.op as SearchOperators);
+		({ value, text } = match.groups);
+
+		if (text) {
+			if (!searchOperatorsToLongFormMap.has(text.trim() as SearchOperators)) {
+				op = text === '@me' ? 'author:' : isSha(text) ? 'commit:' : 'message:';
 				value = text;
 			}
+		}
 
-			if (op && value) {
-				const values = operations.get(op);
-				if (values == null) {
-					operations.set(op, [value]);
-				} else {
-					values.push(value);
-				}
+		if (op && value) {
+			let values = operations.get(op);
+			if (values == null) {
+				values = new Set();
+				operations.set(op, values);
 			}
-		} while (match != null);
+			values.add(value);
+		}
+	} while (match != null);
 
-		return operations;
+	return operations;
+}
+
+const doubleQuoteRegex = /"/g;
+
+export function getGitArgsFromSearchQuery(
+	search: SearchQuery,
+	currentUser: GitUser | undefined,
+): {
+	args: string[];
+	files: string[];
+	shas?: Set<string> | undefined;
+} {
+	const operations = parseSearchQuery(search);
+
+	const searchArgs = new Set<string>();
+	const files: string[] = [];
+
+	let shas;
+
+	let op;
+	let values = operations.get('commit:');
+	if (values != null) {
+		for (const value of values) {
+			searchArgs.add(value.replace(doubleQuoteRegex, ''));
+		}
+		shas = searchArgs;
+	} else {
+		searchArgs.add('--all');
+		searchArgs.add(search.matchRegex ? '--extended-regexp' : '--fixed-strings');
+		if (search.matchRegex && !search.matchCase) {
+			searchArgs.add('--regexp-ignore-case');
+		}
+
+		for ([op, values] of operations.entries()) {
+			switch (op) {
+				case 'message:':
+					if (search.matchAll) {
+						searchArgs.add('--all-match');
+					}
+					for (let value of values) {
+						if (!value) continue;
+						value = value.replace(doubleQuoteRegex, search.matchRegex ? '\\b' : '');
+						if (!value) continue;
+
+						searchArgs.add(`--grep=${value}`);
+					}
+
+					break;
+
+				case 'author:':
+					for (let value of values) {
+						if (!value) continue;
+						value = value.replace(doubleQuoteRegex, search.matchRegex ? '\\b' : '');
+						if (!value) continue;
+
+						if (value === '@me') {
+							if (currentUser?.name == null) continue;
+
+							value = currentUser.name;
+						}
+
+						if (value.startsWith('@')) {
+							searchArgs.add(`--author=${value.slice(1)}`);
+							continue;
+						}
+
+						searchArgs.add(`--author=${value}`);
+					}
+
+					break;
+
+				case 'change:':
+					for (let value of values) {
+						if (!value) continue;
+
+						if (value.startsWith('"')) {
+							value = value.replace(doubleQuoteRegex, '');
+							if (!value) continue;
+						}
+						searchArgs.add(search.matchRegex ? `-G${value}` : `-S${value}`);
+					}
+
+					break;
+
+				case 'file:':
+					for (let value of values) {
+						if (!value) continue;
+
+						if (value.startsWith('"')) {
+							value = value.replace(doubleQuoteRegex, '');
+							if (!value) continue;
+
+							files.push(value);
+						} else {
+							const prefix = search.matchCase ? '' : ':(icase)';
+							if (/[/\\*?|![\]{}]/.test(value)) {
+								files.push(`${prefix}${value}`);
+							} else {
+								const index = value.indexOf('.');
+								if (index > 0) {
+									// maybe a file extension
+									files.push(`${prefix}**/${value}`);
+								} else {
+									files.push(`${prefix}*${value}*`);
+								}
+							}
+						}
+					}
+
+					break;
+				case 'type:':
+					for (const value of values) {
+						if (value === 'stash') {
+							if (!searchArgs.has('--no-walk')) {
+								searchArgs.add('--no-walk');
+							}
+						}
+					}
+
+					break;
+			}
+		}
 	}
 
-	export function toKey(search: SearchPattern) {
-		return `${search.pattern}|${search.matchAll ? 'A' : ''}${search.matchCase ? 'C' : ''}${
-			search.matchRegex ? 'R' : ''
-		}`;
-	}
+	return { args: [...searchArgs.values()], files: files, shas: shas };
 }

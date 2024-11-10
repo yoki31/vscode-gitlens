@@ -1,14 +1,15 @@
-'use strict';
-import { Container } from '../container';
-import { command, Command, Commands } from './common';
+import { Commands } from '../constants.commands';
+import type { Container } from '../container';
+import { command } from '../system/vscode/command';
+import { Command } from './base';
 
 @command()
 export class ToggleCodeLensCommand extends Command {
-	constructor() {
+	constructor(private readonly container: Container) {
 		super(Commands.ToggleCodeLens);
 	}
 
 	execute() {
-		return Container.codeLens.toggleCodeLens();
+		this.container.codeLens.toggleCodeLens();
 	}
 }

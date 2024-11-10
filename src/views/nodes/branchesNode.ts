@@ -1,36 +1,32 @@
-'use strict';
 import { ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
-import { ViewBranchesLayout } from '../../configuration';
-import { Repository } from '../../git/git';
 import { GitUri } from '../../git/gitUri';
-import { Arrays, debug, gate } from '../../system';
-import { BranchesView } from '../branchesView';
-import { RepositoriesView } from '../repositoriesView';
+import type { Repository } from '../../git/models/repository';
+import { getOpenedWorktreesByBranch } from '../../git/models/worktree';
+import { makeHierarchical } from '../../system/array';
+import { debug } from '../../system/decorators/log';
+import type { ViewsWithBranchesNode } from '../viewBase';
+import { CacheableChildrenViewNode } from './abstract/cacheableChildrenViewNode';
+import type { ViewNode } from './abstract/viewNode';
+import { ContextValues, getViewNodeId } from './abstract/viewNode';
 import { BranchNode } from './branchNode';
 import { BranchOrTagFolderNode } from './branchOrTagFolderNode';
 import { MessageNode } from './common';
-import { RepositoryNode } from './repositoryNode';
-import { ContextValues, ViewNode } from './viewNode';
 
-export class BranchesNode extends ViewNode<BranchesView | RepositoriesView> {
-	static key = ':branches';
-	static getId(repoPath: string): string {
-		return `${RepositoryNode.getId(repoPath)}${this.key}`;
-	}
-
-	private _children: ViewNode[] | undefined;
-
+export class BranchesNode extends CacheableChildrenViewNode<'branches', ViewsWithBranchesNode> {
 	constructor(
 		uri: GitUri,
-		view: BranchesView | RepositoriesView,
-		parent: ViewNode,
+		view: ViewsWithBranchesNode,
+		protected override readonly parent: ViewNode,
 		public readonly repo: Repository,
 	) {
-		super(uri, view, parent);
+		super('branches', uri, view, parent);
+
+		this.updateContext({ repository: repo });
+		this._uniqueId = getViewNodeId(this.type, this.context);
 	}
 
 	override get id(): string {
-		return BranchesNode.getId(this.repo.path);
+		return this._uniqueId;
 	}
 
 	get repoPath(): string {
@@ -38,26 +34,40 @@ export class BranchesNode extends ViewNode<BranchesView | RepositoriesView> {
 	}
 
 	async getChildren(): Promise<ViewNode[]> {
-		if (this._children == null) {
-			const branches = await this.repo.getBranches({
+		if (this.children == null) {
+			const branches = await this.repo.git.getBranches({
 				// only show local branches
 				filter: b => !b.remote,
-				sort: { current: false },
+				sort: this.view.config.showCurrentBranchOnTop
+					? {
+							current: true,
+							openedWorktreesByBranch: getOpenedWorktreesByBranch(this.context.worktreesByBranch),
+					  }
+					: { current: false },
 			});
-			if (branches.length === 0) return [new MessageNode(this.view, this, 'No branches could be found.')];
+			if (branches.values.length === 0) return [new MessageNode(this.view, this, 'No branches could be found.')];
 
-			const branchNodes = branches.map(
+			// TODO@eamodio handle paging
+			const branchNodes = branches.values.map(
 				b =>
-					new BranchNode(GitUri.fromRepoPath(this.uri.repoPath!, b.ref), this.view, this, b, false, {
-						showComparison:
-							this.view instanceof RepositoriesView
-								? this.view.config.branches.showBranchComparison
-								: this.view.config.showBranchComparison,
-					}),
+					new BranchNode(
+						GitUri.fromRepoPath(this.uri.repoPath!, b.ref),
+						this.view,
+						this,
+						this.repo,
+						b,
+						false,
+						{
+							showComparison:
+								this.view.type === 'repositories'
+									? this.view.config.branches.showBranchComparison
+									: this.view.config.showBranchComparison,
+						},
+					),
 			);
-			if (this.view.config.branches.layout === ViewBranchesLayout.List) return branchNodes;
+			if (this.view.config.branches.layout === 'list') return branchNodes;
 
-			const hierarchy = Arrays.makeHierarchical(
+			const hierarchy = makeHierarchical(
 				branchNodes,
 				n => n.treeHierarchy,
 				(...paths) => paths.join('/'),
@@ -68,37 +78,31 @@ export class BranchesNode extends ViewNode<BranchesView | RepositoriesView> {
 				},
 			);
 
-			const root = new BranchOrTagFolderNode(
-				this.view,
-				this,
-				'branch',
-				this.repo.path,
-				'',
-				undefined,
-				hierarchy,
-				'branches',
-			);
-			this._children = root.getChildren();
+			const root = new BranchOrTagFolderNode(this.view, this, 'branch', hierarchy, this.repo.path, '', undefined);
+			this.children = root.getChildren();
 		}
 
-		return this._children;
+		return this.children;
 	}
 
 	async getTreeItem(): Promise<TreeItem> {
 		const item = new TreeItem('Branches', TreeItemCollapsibleState.Collapsed);
 		item.id = this.id;
 		item.contextValue = ContextValues.Branches;
-		if (await this.repo.hasRemotes()) {
+		if ((await this.repo.git.getRemotes()).length) {
 			item.contextValue += '+remotes';
+		}
+		// TODO@axosoft-ramint Temporary workaround, remove when our git commands work on closed repos.
+		if (this.repo.closed) {
+			item.contextValue += '+closed';
 		}
 		item.iconPath = new ThemeIcon('git-branch');
 
 		return item;
 	}
 
-	@gate()
 	@debug()
 	override refresh() {
-		this._children = undefined;
+		super.refresh(true);
 	}
 }

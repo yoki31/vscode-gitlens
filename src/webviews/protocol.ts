@@ -1,164 +1,165 @@
-'use strict';
-import { Config } from '../config';
+import type { TimeInput } from '@opentelemetry/api';
+import type { Config } from '../config';
+import type { Source, TelemetryEvents, TelemetryEventsFromWebviewApp } from '../constants.telemetry';
+import type {
+	CustomEditorIds,
+	CustomEditorTypes,
+	WebviewIds,
+	WebviewTypes,
+	WebviewViewIds,
+	WebviewViewTypes,
+} from '../constants.views';
+import type { ConfigPath, ConfigPathValue, Path, PathValue } from '../system/vscode/configuration';
 
-export interface IpcMessage {
+export type IpcScope = 'core' | CustomEditorTypes | WebviewTypes | WebviewViewTypes;
+
+export interface IpcMessage<T = unknown> {
 	id: string;
+	scope: IpcScope;
 	method: string;
-	params?: any;
+	packed?: boolean;
+	params: T;
+	completionId?: string;
 }
 
-export type IpcNotificationParamsOf<NT> = NT extends IpcNotificationType<infer P> ? P : never;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export class IpcNotificationType<P = any> {
-	constructor(public readonly method: string) {}
+abstract class IpcCall<Params> {
+	public readonly method: string;
+
+	constructor(
+		public readonly scope: IpcScope,
+		method: string,
+		public readonly reset: boolean = false,
+		public readonly pack: boolean = false,
+	) {
+		this.method = `${scope}/${method}`;
+	}
+
+	is(msg: IpcMessage): msg is IpcMessage<Params> {
+		return msg.method === this.method;
+	}
 }
 
-export type IpcCommandParamsOf<CT> = CT extends IpcCommandType<infer P> ? P : never;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export class IpcCommandType<P = any> {
-	constructor(public readonly method: string) {}
+export type IpcCallMessageType<T> = T extends IpcCall<infer P> ? IpcMessage<P> : never;
+export type IpcCallParamsType<T> = IpcCallMessageType<T>['params'];
+export type IpcCallResponseType<T> = T extends IpcRequest<infer _, infer _> ? T['response'] : never;
+export type IpcCallResponseMessageType<T> = IpcCallMessageType<IpcCallResponseType<T>>;
+export type IpcCallResponseParamsType<T> = IpcCallResponseMessageType<T>['params'];
+
+/**
+ * Commands are sent from the webview to the extension
+ */
+export class IpcCommand<Params = void> extends IpcCall<Params> {}
+
+/**
+ * Requests are sent from the webview to the extension and expect a response back
+ */
+export class IpcRequest<Params = void, ResponseParams = void> extends IpcCall<Params> {
+	public readonly response: IpcNotification<ResponseParams>;
+
+	constructor(scope: IpcScope, method: string, reset?: boolean, pack?: boolean) {
+		super(scope, method, reset, pack);
+
+		this.response = new IpcNotification<ResponseParams>(this.scope, `${method}/completion`, this.reset, this.pack);
+	}
 }
 
-export function onIpcCommand<CT extends IpcCommandType>(
-	type: CT,
-	command: IpcMessage,
-	fn: (params: IpcCommandParamsOf<CT>) => unknown,
-) {
-	fn(command.params);
-}
+/**
+ * Notifications are sent from the extension to the webview
+ */
+export class IpcNotification<Params = void> extends IpcCall<Params> {}
 
-export function onIpcNotification<NT extends IpcNotificationType>(
-	type: NT,
-	notification: IpcMessage,
-	fn: (params: IpcNotificationParamsOf<NT>) => void,
-) {
-	fn(notification.params);
-}
+// COMMANDS
 
-export interface DidChangeConfigurationNotificationParams {
+export const WebviewReadyCommand = new IpcCommand('core', 'webview/ready');
+
+export interface WebviewFocusChangedParams {
+	focused: boolean;
+	inputFocused: boolean;
+}
+export const WebviewFocusChangedCommand = new IpcCommand<WebviewFocusChangedParams>('core', 'webview/focus/changed');
+
+export interface ExecuteCommandParams {
+	command: string;
+	args?: [];
+}
+export const ExecuteCommand = new IpcCommand<ExecuteCommandParams>('core', 'command/execute');
+
+export interface UpdateConfigurationParams {
+	changes: {
+		[key in ConfigPath | CustomConfigPath]?: ConfigPathValue<ConfigPath> | CustomConfigPathValue<CustomConfigPath>;
+	};
+	removes: (keyof { [key in ConfigPath | CustomConfigPath]?: ConfigPathValue<ConfigPath> })[];
+	scope?: 'user' | 'workspace';
+	uri?: string;
+}
+export const UpdateConfigurationCommand = new IpcCommand<UpdateConfigurationParams>('core', 'configuration/update');
+
+export interface TelemetrySendEventParams<T extends keyof TelemetryEvents = keyof TelemetryEvents> {
+	name: T;
+	data: TelemetryEventsFromWebviewApp[T];
+	source?: Source;
+	startTime?: TimeInput;
+	endTime?: TimeInput;
+}
+export const TelemetrySendEventCommand = new IpcCommand<TelemetrySendEventParams>('core', 'telemetry/sendEvent');
+
+// NOTIFICATIONS
+
+export interface DidChangeHostWindowFocusParams {
+	focused: boolean;
+}
+export const DidChangeHostWindowFocusNotification = new IpcNotification<DidChangeHostWindowFocusParams>(
+	'core',
+	'window/focus/didChange',
+);
+
+export interface DidChangeWebviewFocusParams {
+	focused: boolean;
+}
+export const DidChangeWebviewFocusNotification = new IpcCommand<DidChangeWebviewFocusParams>(
+	'core',
+	'webview/focus/didChange',
+);
+
+export interface DidChangeConfigurationParams {
 	config: Config;
 	customSettings: Record<string, boolean>;
 }
-export const DidChangeConfigurationNotificationType = new IpcNotificationType<DidChangeConfigurationNotificationParams>(
+export const DidChangeConfigurationNotification = new IpcNotification<DidChangeConfigurationParams>(
+	'core',
 	'configuration/didChange',
 );
 
-export const ReadyCommandType = new IpcCommandType('webview/ready');
-
-export interface UpdateConfigurationCommandParams {
-	changes: {
-		[key: string]: any;
+interface CustomConfig {
+	rebaseEditor: {
+		enabled: boolean;
 	};
-	removes: string[];
-	scope: 'user' | 'workspace';
-	uri?: string;
-}
-export const UpdateConfigurationCommandType = new IpcCommandType<UpdateConfigurationCommandParams>(
-	'configuration/update',
-);
-
-export interface CommitPreviewConfigurationCommandParams {
-	key: string;
-	id: string;
-	type: 'commit';
-
-	format: string;
-}
-
-type PreviewConfigurationCommandParams = CommitPreviewConfigurationCommandParams;
-export const PreviewConfigurationCommandType = new IpcCommandType<PreviewConfigurationCommandParams>(
-	'configuration/preview',
-);
-
-export interface DidPreviewConfigurationNotificationParams {
-	id: string;
-	preview: string;
-}
-export const DidPreviewConfigurationNotificationType =
-	new IpcNotificationType<DidPreviewConfigurationNotificationParams>('configuration/didPreview');
-
-export interface SettingsDidRequestJumpToNotificationParams {
-	anchor: string;
-}
-export const SettingsDidRequestJumpToNotificationType =
-	new IpcNotificationType<SettingsDidRequestJumpToNotificationParams>('settings/jumpTo');
-
-export interface AppStateWithConfig {
-	config: Config;
-	customSettings?: Record<string, boolean>;
-}
-
-export interface SettingsState extends AppStateWithConfig {
-	scope: 'user' | 'workspace';
-	scopes: ['user' | 'workspace', string][];
-}
-
-export type WelcomeState = AppStateWithConfig;
-
-export interface Author {
-	readonly author: string;
-	readonly avatarUrl: string;
-	readonly email: string | undefined;
-}
-
-export interface Commit {
-	readonly ref: string;
-	readonly author: string;
-	// readonly avatarUrl: string;
-	readonly date: string;
-	readonly dateFromNow: string;
-	// readonly email: string | undefined;
-	readonly message: string;
-	// readonly command: string;
-}
-
-export type RebaseEntryAction = 'pick' | 'reword' | 'edit' | 'squash' | 'fixup' | 'break' | 'drop';
-
-export interface RebaseEntry {
-	readonly action: RebaseEntryAction;
-	readonly ref: string;
-	readonly message: string;
-	readonly index: number;
-}
-
-export interface RebaseDidChangeNotificationParams {
-	state: RebaseState;
-}
-export const RebaseDidChangeNotificationType = new IpcNotificationType<RebaseDidChangeNotificationParams>(
-	'rebase/change',
-);
-
-export const RebaseDidAbortCommandType = new IpcCommandType('rebase/abort');
-
-export const RebaseDidDisableCommandType = new IpcCommandType('rebase/disable');
-
-export const RebaseDidStartCommandType = new IpcCommandType('rebase/start');
-
-export const RebaseDidSwitchCommandType = new IpcCommandType('rebase/switch');
-
-export interface RebaseDidChangeEntryCommandParams {
-	ref: string;
-	action: RebaseEntryAction;
-}
-export const RebaseDidChangeEntryCommandType = new IpcCommandType<RebaseDidChangeEntryCommandParams>(
-	'rebase/change/entry',
-);
-
-export interface RebaseDidMoveEntryCommandParams {
-	ref: string;
-	to: number;
-	relative: boolean;
-}
-export const RebaseDidMoveEntryCommandType = new IpcCommandType<RebaseDidMoveEntryCommandParams>('rebase/move/entry');
-
-export interface RebaseState {
-	branch: string;
-	onto: string;
-
-	entries: RebaseEntry[];
-	authors: Author[];
-	commits: Commit[];
-	commands: {
-		commit: string;
+	currentLine: {
+		useUncommittedChangesFormat: boolean;
 	};
+}
+
+export type CustomConfigPath = Path<CustomConfig>;
+export type CustomConfigPathValue<P extends CustomConfigPath> = PathValue<CustomConfig, P>;
+
+const customConfigKeys: readonly CustomConfigPath[] = [
+	'rebaseEditor.enabled',
+	'currentLine.useUncommittedChangesFormat',
+];
+
+export function isCustomConfigKey(key: string): key is CustomConfigPath {
+	return customConfigKeys.includes(key as CustomConfigPath);
+}
+
+export function assertsConfigKeyValue<T extends ConfigPath>(
+	_key: T,
+	value: unknown,
+): asserts value is ConfigPathValue<T> {
+	// Noop
+}
+
+export interface WebviewState<Id extends WebviewIds | WebviewViewIds | CustomEditorIds = WebviewIds | WebviewViewIds> {
+	webviewId: Id;
+	webviewInstanceId: string | undefined;
+	timestamp: number;
 }

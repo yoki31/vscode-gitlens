@@ -1,122 +1,56 @@
-'use strict';
-import { commands, TextDocument, TextEditor, window } from 'vscode';
-import { ViewShowBranchComparison } from './config';
-import { SearchPattern } from './git/git';
-
+export const extensionPrefix = 'gitlens';
 export const quickPickTitleMaxChars = 80;
 
-export enum BuiltInCommands {
-	CloseActiveEditor = 'workbench.action.closeActiveEditor',
-	CloseAllEditors = 'workbench.action.closeAllEditors',
-	CursorMove = 'cursorMove',
-	Diff = 'vscode.diff',
-	EditorScroll = 'editorScroll',
-	ExecuteDocumentSymbolProvider = 'vscode.executeDocumentSymbolProvider',
-	ExecuteCodeLensProvider = 'vscode.executeCodeLensProvider',
-	FocusFilesExplorer = 'workbench.files.action.focusFilesExplorer',
-	InstallExtension = 'workbench.extensions.installExtension',
-	Open = 'vscode.open',
-	OpenFolder = 'vscode.openFolder',
-	OpenInTerminal = 'openInTerminal',
-	OpenWith = 'vscode.openWith',
-	NextEditor = 'workbench.action.nextEditor',
-	PreviewHtml = 'vscode.previewHtml',
-	RevealLine = 'revealLine',
-	SetContext = 'setContext',
-	ShowExplorerActivity = 'workbench.view.explorer',
-	ShowReferences = 'editor.action.showReferences',
+export const experimentalBadge = 'ᴇxᴘᴇʀɪᴍᴇɴᴛᴀʟ';
+export const previewBadge = 'ᴘʀᴇᴠɪᴇᴡ';
+export const proBadge = 'ᴘʀᴏ';
+export const proBadgeSuperscript = 'ᴾᴿᴼ';
+
+export type AnnotationStatus = 'computing' | 'computed';
+
+export const enum CharCode {
+	/**
+	 * The `#` character.
+	 */
+	Hash = 35,
+	/**
+	 * The `/` character.
+	 */
+	Slash = 47,
+	Digit0 = 48,
+	Digit1 = 49,
+	Digit2 = 50,
+	Digit3 = 51,
+	Digit4 = 52,
+	Digit5 = 53,
+	Digit6 = 54,
+	Digit7 = 55,
+	Digit8 = 56,
+	Digit9 = 57,
+	/**
+	 * The `\` character.
+	 */
+	Backslash = 92,
+	A = 65,
+	B = 66,
+	C = 67,
+	D = 68,
+	E = 69,
+	F = 70,
+	Z = 90,
+	a = 97,
+	b = 98,
+	c = 99,
+	d = 100,
+	e = 101,
+	f = 102,
+	z = 122,
 }
 
-export enum BuiltInGitCommands {
-	Publish = 'git.publish',
-	Pull = 'git.pull',
-	PullRebase = 'git.pullRebase',
-	Push = 'git.push',
-	PushForce = 'git.pushForce',
-	UndoCommit = 'git.undoCommit',
-}
-
-export enum BuiltInGitConfiguration {
-	AutoRepositoryDetection = 'git.autoRepositoryDetection',
-	FetchOnPull = 'git.fetchOnPull',
-	UseForcePushWithLease = 'git.useForcePushWithLease',
-}
-
-export enum ContextKeys {
-	ActionPrefix = 'gitlens:action:',
-	ActiveFileStatus = 'gitlens:activeFileStatus',
-	AnnotationStatus = 'gitlens:annotationStatus',
-	DisabledToggleCodeLens = 'gitlens:disabledToggleCodeLens',
-	Disabled = 'gitlens:disabled',
-	Enabled = 'gitlens:enabled',
-	HasConnectedRemotes = 'gitlens:hasConnectedRemotes',
-	HasRemotes = 'gitlens:hasRemotes',
-	HasRichRemotes = 'gitlens:hasRichRemotes',
-	Key = 'gitlens:key',
-	Readonly = 'gitlens:readonly',
-	ViewsCanCompare = 'gitlens:views:canCompare',
-	ViewsCanCompareFile = 'gitlens:views:canCompare:file',
-	ViewsCommitsMyCommitsOnly = 'gitlens:views:commits:myCommitsOnly',
-	ViewsFileHistoryCanPin = 'gitlens:views:fileHistory:canPin',
-	ViewsFileHistoryCursorFollowing = 'gitlens:views:fileHistory:cursorFollowing',
-	ViewsFileHistoryEditorFollowing = 'gitlens:views:fileHistory:editorFollowing',
-	ViewsLineHistoryEditorFollowing = 'gitlens:views:lineHistory:editorFollowing',
-	ViewsRepositoriesAutoRefresh = 'gitlens:views:repositories:autoRefresh',
-	ViewsSearchAndCompareKeepResults = 'gitlens:views:searchAndCompare:keepResults',
-	ViewsWelcomeVisible = 'gitlens:views:welcome:visible',
-	Vsls = 'gitlens:vsls',
-}
-
-export function setContext(key: ContextKeys | string, value: any) {
-	return commands.executeCommand(BuiltInCommands.SetContext, key, value);
-}
-
-export enum Colors {
-	GutterBackgroundColor = 'gitlens.gutterBackgroundColor',
-	GutterForegroundColor = 'gitlens.gutterForegroundColor',
-	GutterUncommittedForegroundColor = 'gitlens.gutterUncommittedForegroundColor',
-	TrailingLineBackgroundColor = 'gitlens.trailingLineBackgroundColor',
-	TrailingLineForegroundColor = 'gitlens.trailingLineForegroundColor',
-	LineHighlightBackgroundColor = 'gitlens.lineHighlightBackgroundColor',
-	LineHighlightOverviewRulerColor = 'gitlens.lineHighlightOverviewRulerColor',
-	ClosedPullRequestIconColor = 'gitlens.closedPullRequestIconColor',
-	OpenPullRequestIconColor = 'gitlens.openPullRequestIconColor',
-	MergedPullRequestIconColor = 'gitlens.mergedPullRequestIconColor',
-	UnpushlishedChangesIconColor = 'gitlens.unpushlishedChangesIconColor',
-	UnpublishedCommitIconColor = 'gitlens.unpublishedCommitIconColor',
-	UnpulledChangesIconColor = 'gitlens.unpulledChangesIconColor',
-}
-
-export enum DocumentSchemes {
-	DebugConsole = 'debug',
-	File = 'file',
-	Git = 'git',
-	GitLens = 'gitlens',
-	Output = 'output',
-	PRs = 'pr',
-	Vsls = 'vsls',
-}
-
-export function getEditorIfActive(document: TextDocument): TextEditor | undefined {
-	const editor = window.activeTextEditor;
-	return editor != null && editor.document === document ? editor : undefined;
-}
-
-export function isActiveDocument(document: TextDocument): boolean {
-	const editor = window.activeTextEditor;
-	return editor != null && editor.document === document;
-}
-
-export function isTextEditor(editor: TextEditor): boolean {
-	const scheme = editor.document.uri.scheme;
-	return scheme !== DocumentSchemes.Output && scheme !== DocumentSchemes.DebugConsole;
-}
-
-export function hasVisibleTextEditor(): boolean {
-	if (window.visibleTextEditors.length === 0) return false;
-
-	return window.visibleTextEditors.some(e => isTextEditor(e));
-}
+export type GitConfigKeys =
+	| `branch.${string}.${'gk' | 'vscode'}-merge-base`
+	| `branch.${string}.gk-target-base`
+	| `branch.${string}.github-pr-owner-number`;
 
 export const enum GlyphChars {
 	AngleBracketLeftHeavy = '\u2770',
@@ -165,23 +99,7 @@ export const enum GlyphChars {
 	ZeroWidthSpace = '\u200b',
 }
 
-export enum SyncedState {
-	Version = 'gitlens:synced:version',
-	WelcomeViewVisible = 'gitlens:views:welcome:visible',
-
-	Deprecated_DisallowConnectionPrefix = 'gitlens:disallow:connection:',
-}
-
-export enum GlobalState {
-	Avatars = 'gitlens:avatars',
-	PendingWelcomeOnFocus = 'gitlens:pendingWelcomeOnFocus',
-	PendingWhatsNewOnFocus = 'gitlens:pendingWhatsNewOnFocus',
-	Version = 'gitlens:version',
-
-	Deprecated_Version = 'gitlensVersion',
-}
-
-export const ImageMimetypes: Record<string, string> = {
+export const imageMimetypes: Record<string, string> = Object.freeze({
 	'.png': 'image/png',
 	'.gif': 'image/gif',
 	'.jpg': 'image/jpeg',
@@ -191,73 +109,76 @@ export const ImageMimetypes: Record<string, string> = {
 	'.tif': 'image/tiff',
 	'.tiff': 'image/tiff',
 	'.bmp': 'image/bmp',
-};
+});
 
-export interface BranchComparison {
-	ref: string;
-	notation: '..' | '...' | undefined;
-	type: Exclude<ViewShowBranchComparison, false> | undefined;
+export const keys = Object.freeze([
+	'left',
+	'alt+left',
+	'ctrl+left',
+	'right',
+	'alt+right',
+	'ctrl+right',
+	'alt+,',
+	'alt+.',
+	'alt+enter',
+	'ctrl+enter',
+	'escape',
+] as const);
+export type Keys = (typeof keys)[number];
+
+export const enum Schemes {
+	File = 'file',
+	Git = 'git',
+	GitHub = 'github',
+	GitLens = 'gitlens',
+	PRs = 'pr',
+	Remote = 'vscode-remote',
+	Vsls = 'vsls',
+	VslsScc = 'vsls-scc',
+	Virtual = 'vscode-vfs',
 }
 
-export interface BranchComparisons {
-	[id: string]: string | BranchComparison;
-}
+export const trackableSchemes = Object.freeze(
+	new Set<Schemes>([
+		Schemes.File,
+		Schemes.Git,
+		Schemes.GitLens,
+		Schemes.PRs,
+		Schemes.Remote,
+		Schemes.Vsls,
+		Schemes.VslsScc,
+		Schemes.Virtual,
+		Schemes.GitHub,
+	]),
+);
 
-export interface NamedRef {
-	label?: string;
-	ref: string;
-}
+const utm = 'utm_source=gitlens-extension&utm_medium=in-app-links';
+export const urls = Object.freeze({
+	codeSuggest: `https://gitkraken.com/solutions/code-suggest?${utm}`,
+	cloudPatches: `https://gitkraken.com/solutions/cloud-patches?${utm}`,
+	graph: `https://gitkraken.com/solutions/commit-graph?${utm}`,
+	launchpad: `https://gitkraken.com/solutions/launchpad?${utm}`,
+	platform: `https://gitkraken.com/devex?${utm}`,
+	pricing: `https://gitkraken.com/gitlens/pricing?${utm}`,
+	proFeatures: `https://gitkraken.com/gitlens/pro-features?${utm}`,
+	security: `https://help.gitkraken.com/gitlens/security?${utm}`,
+	workspaces: `https://gitkraken.com/solutions/workspaces?${utm}`,
 
-export interface PinnedComparison {
-	type: 'comparison';
-	timestamp: number;
-	path: string;
-	ref1: NamedRef;
-	ref2: NamedRef;
-	notation?: '..' | '...';
-}
+	cli: `https://gitkraken.com/cli?${utm}`,
+	browserExtension: `https://gitkraken.com/browser-extension?${utm}`,
+	desktop: `https://gitkraken.com/git-client?${utm}`,
 
-export interface PinnedSearch {
-	type: 'search';
-	timestamp: number;
-	path: string;
-	labels: {
-		label: string;
-		queryLabel:
-			| string
-			| {
-					label: string;
-					resultsType?: { singular: string; plural: string };
-			  };
-	};
-	search: SearchPattern;
-}
+	releaseNotes: 'https://help.gitkraken.com/gitlens/gitlens-release-notes-current/',
+	releaseAnnouncement: `https://www.gitkraken.com/blog/gitkraken-launches-devex-platform-acquires-codesee?${utm}`,
+});
 
-export type PinnedItem = PinnedComparison | PinnedSearch;
-
-export interface PinnedItems {
-	[id: string]: PinnedItem;
-}
-
-export interface Starred {
-	[id: string]: boolean;
-}
-
-export interface Usage {
-	[id: string]: number;
-}
-
-export enum WorkspaceState {
-	BranchComparisons = 'gitlens:branch:comparisons',
-	ConnectedPrefix = 'gitlens:connected:',
-	DefaultRemote = 'gitlens:remote:default',
-	GitCommandPaletteUsage = 'gitlens:gitComandPalette:usage',
-	StarredBranches = 'gitlens:starred:branches',
-	StarredRepositories = 'gitlens:starred:repositories',
-	ViewsRepositoriesAutoRefresh = 'gitlens:views:repositories:autoRefresh',
-	ViewsSearchAndCompareKeepResults = 'gitlens:views:searchAndCompare:keepResults',
-	ViewsSearchAndComparePinnedItems = 'gitlens:views:searchAndCompare:pinned',
-
-	Deprecated_DisallowConnectionPrefix = 'gitlens:disallow:connection:',
-	Deprecated_PinnedComparisons = 'gitlens:pinned:comparisons',
-}
+export type WalkthroughSteps =
+	| 'welcome-in-trial'
+	| 'welcome-paid'
+	| 'welcome-in-trial-expired-eligible'
+	| 'welcome-in-trial-expired'
+	| 'get-started-community'
+	| 'visualize-code-history'
+	| 'accelerate-pr-reviews'
+	| 'streamline-collaboration'
+	| 'improve-workflows-with-integrations';

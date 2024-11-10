@@ -1,23 +1,28 @@
-'use strict';
-import * as paths from 'path';
-import { Command, ThemeIcon, TreeItem, TreeItemCollapsibleState, Uri } from 'vscode';
-import { BuiltInCommands } from '../../constants';
-import { GitFile, GitMergeStatus, GitRebaseStatus, StatusFileFormatter } from '../../git/git';
+import type { Command, Uri } from 'vscode';
+import { ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
+import { StatusFileFormatter } from '../../git/formatters/statusFormatter';
 import { GitUri } from '../../git/gitUri';
-import { ViewsWithCommits } from '../viewBase';
-import { FileNode } from './folderNode';
+import type { GitFile } from '../../git/models/file';
+import type { GitMergeStatus } from '../../git/models/merge';
+import type { GitRebaseStatus } from '../../git/models/rebase';
+import { createCoreCommand } from '../../system/vscode/command';
+import { relativeDir } from '../../system/vscode/path';
+import type { ViewsWithCommits } from '../viewBase';
+import { getFileTooltipMarkdown, ViewFileNode } from './abstract/viewFileNode';
+import type { ViewNode } from './abstract/viewNode';
+import { ContextValues } from './abstract/viewNode';
+import type { FileNode } from './folderNode';
 import { MergeConflictCurrentChangesNode } from './mergeConflictCurrentChangesNode';
 import { MergeConflictIncomingChangesNode } from './mergeConflictIncomingChangesNode';
-import { ContextValues, ViewNode } from './viewNode';
 
-export class MergeConflictFileNode extends ViewNode<ViewsWithCommits> implements FileNode {
+export class MergeConflictFileNode extends ViewFileNode<'conflict-file', ViewsWithCommits> implements FileNode {
 	constructor(
 		view: ViewsWithCommits,
 		parent: ViewNode,
+		file: GitFile,
 		public readonly status: GitMergeStatus | GitRebaseStatus,
-		public readonly file: GitFile,
 	) {
-		super(GitUri.fromFile(file, status.repoPath, status.HEAD.ref), view, parent);
+		super('conflict-file', GitUri.fromFile(file, status.repoPath, status.HEAD.ref), view, parent, file);
 	}
 
 	override toClipboard(): string {
@@ -29,11 +34,7 @@ export class MergeConflictFileNode extends ViewNode<ViewsWithCommits> implements
 	}
 
 	get fileName(): string {
-		return this.file.fileName;
-	}
-
-	get repoPath(): string {
-		return this.status.repoPath;
+		return this.file.path;
 	}
 
 	getChildren(): ViewNode[] {
@@ -47,12 +48,11 @@ export class MergeConflictFileNode extends ViewNode<ViewsWithCommits> implements
 		const item = new TreeItem(this.label, TreeItemCollapsibleState.Collapsed);
 		item.description = this.description;
 		item.contextValue = `${ContextValues.File}+conflicted`;
-		item.tooltip = StatusFileFormatter.fromTemplate(
-			`\${file}\n\${directory}/\n\n\${status}\${ (originalPath)} in Index (staged)`,
-			this.file,
-		);
+
+		item.tooltip = getFileTooltipMarkdown(this.file, 'in ```Index```');
+
 		// Use the file icon and decorations
-		item.resourceUri = GitUri.resolveToUri(this.file.fileName, this.repoPath);
+		item.resourceUri = this.view.container.git.getAbsoluteUri(this.file.path, this.repoPath);
 		item.iconPath = ThemeIcon.File;
 		item.command = this.getCommand();
 
@@ -80,7 +80,7 @@ export class MergeConflictFileNode extends ViewNode<ViewsWithCommits> implements
 	private _folderName: string | undefined;
 	get folderName() {
 		if (this._folderName == null) {
-			this._folderName = paths.dirname(this.uri.relativePath);
+			this._folderName = relativeDir(this.uri.relativePath);
 		}
 		return this._folderName;
 	}
@@ -109,17 +109,15 @@ export class MergeConflictFileNode extends ViewNode<ViewsWithCommits> implements
 		this._description = undefined;
 	}
 
-	override getCommand(): Command | undefined {
-		return {
-			title: 'Open File',
-			command: BuiltInCommands.Open,
-			arguments: [
-				GitUri.resolveToUri(this.file.fileName, this.repoPath),
-				{
-					preserveFocus: true,
-					preview: true,
-				},
-			],
-		};
+	override getCommand(): Command {
+		return createCoreCommand(
+			'vscode.open',
+			'Open File',
+			this.view.container.git.getAbsoluteUri(this.file.path, this.repoPath),
+			{
+				preserveFocus: true,
+				preview: true,
+			},
+		);
 	}
 }

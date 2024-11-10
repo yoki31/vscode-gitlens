@@ -1,8 +1,11 @@
-'use strict';
-import { env, Uri } from 'vscode';
-import { Container } from '../container';
-import { PullRequestNode } from '../views/nodes';
-import { Command, command, CommandContext, Commands } from './common';
+import { env, window } from 'vscode';
+import { Commands } from '../constants.commands';
+import type { Container } from '../container';
+import { shortenRevision } from '../git/models/reference';
+import { command } from '../system/vscode/command';
+import { openUrl } from '../system/vscode/utils';
+import type { CommandContext } from './base';
+import { Command } from './base';
 
 export interface OpenPullRequestOnRemoteCommandArgs {
 	clipboard?: boolean;
@@ -13,15 +16,15 @@ export interface OpenPullRequestOnRemoteCommandArgs {
 
 @command()
 export class OpenPullRequestOnRemoteCommand extends Command {
-	constructor() {
+	constructor(private readonly container: Container) {
 		super([Commands.OpenPullRequestOnRemote, Commands.CopyRemotePullRequestUrl]);
 	}
 
 	protected override preExecute(context: CommandContext, args?: OpenPullRequestOnRemoteCommandArgs) {
-		if (context.type === 'viewItem' && context.node instanceof PullRequestNode) {
+		if (context.type === 'viewItem' && (context.node.is('pullrequest') || context.node.is('launchpad-item'))) {
 			args = {
 				...args,
-				pr: { url: context.node.pullRequest.url },
+				pr: context.node.pullRequest != null ? { url: context.node.pullRequest.url } : undefined,
 				clipboard: context.command === Commands.CopyRemotePullRequestUrl,
 			};
 		}
@@ -33,20 +36,26 @@ export class OpenPullRequestOnRemoteCommand extends Command {
 		if (args?.pr == null) {
 			if (args?.repoPath == null || args?.ref == null) return;
 
-			const remote = await Container.git.getRichRemoteProvider(args.repoPath);
-			if (remote?.provider == null) return;
+			const remote = await this.container.git.getBestRemoteWithIntegration(args.repoPath);
+			if (remote == null) return;
 
-			const pr = await Container.git.getPullRequestForCommit(args.ref, remote.provider);
-			if (pr == null) return;
+			const provider = await this.container.integrations.getByRemote(remote);
+			if (provider == null) return;
+
+			const pr = await provider.getPullRequestForCommit(remote.provider.repoDesc, args.ref);
+			if (pr == null) {
+				void window.showInformationMessage(`No pull request associated with '${shortenRevision(args.ref)}'`);
+				return;
+			}
 
 			args = { ...args };
 			args.pr = pr;
 		}
 
 		if (args.clipboard) {
-			void (await env.clipboard.writeText(args.pr.url));
+			await env.clipboard.writeText(args.pr.url);
 		} else {
-			void env.openExternal(Uri.parse(args.pr.url));
+			void openUrl(args.pr.url);
 		}
 	}
 }

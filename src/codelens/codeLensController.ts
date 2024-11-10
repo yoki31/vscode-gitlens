@@ -1,15 +1,14 @@
-'use strict';
-import { ConfigurationChangeEvent, Disposable, languages } from 'vscode';
-import { configuration } from '../configuration';
-import { ContextKeys, setContext } from '../constants';
-import { Container } from '../container';
-import { Logger } from '../logger';
-import {
-	DocumentBlameStateChangeEvent,
-	DocumentDirtyIdleTriggerEvent,
-	GitDocumentState,
-} from '../trackers/gitDocumentTracker';
-import { GitCodeLensProvider } from './codeLensProvider';
+import type { ConfigurationChangeEvent } from 'vscode';
+import { Disposable, languages } from 'vscode';
+import type { Container } from '../container';
+import { log } from '../system/decorators/log';
+import { once } from '../system/event';
+import { getLoggableName, Logger } from '../system/logger';
+import { getLogScope, setLogScopeExit, startLogScope } from '../system/logger.scope';
+import { configuration } from '../system/vscode/configuration';
+import { setContext } from '../system/vscode/context';
+import type { DocumentBlameStateChangeEvent, DocumentDirtyIdleTriggerEvent } from '../trackers/documentTracker';
+import type { GitCodeLensProvider } from './codeLensProvider';
 
 export class GitCodeLensController implements Disposable {
 	private _canToggle: boolean = false;
@@ -17,9 +16,11 @@ export class GitCodeLensController implements Disposable {
 	private _provider: GitCodeLensProvider | undefined;
 	private _providerDisposable: Disposable | undefined;
 
-	constructor() {
-		this._disposable = Disposable.from(configuration.onDidChange(this.onConfigurationChanged, this));
-		this.onConfigurationChanged();
+	constructor(private readonly container: Container) {
+		this._disposable = Disposable.from(
+			once(container.onReady)(this.onReady, this),
+			configuration.onDidChange(this.onConfigurationChanged, this),
+		);
 	}
 
 	dispose() {
@@ -27,64 +28,76 @@ export class GitCodeLensController implements Disposable {
 		this._disposable?.dispose();
 	}
 
+	private onReady(): void {
+		this.onConfigurationChanged();
+	}
+
 	private onConfigurationChanged(e?: ConfigurationChangeEvent) {
-		if (
-			configuration.changed(e, 'codeLens') ||
-			configuration.changed(e, 'defaultDateFormat') ||
-			configuration.changed(e, 'defaultDateSource') ||
-			configuration.changed(e, 'defaultDateStyle')
-		) {
+		using scope = startLogScope(`${getLoggableName(this)}.onConfigurationChanged`, false);
+
+		if (configuration.changed(e, ['codeLens', 'defaultDateFormat', 'defaultDateSource', 'defaultDateStyle'])) {
 			if (e != null) {
-				Logger.log('CodeLens config changed; resetting CodeLens provider');
+				Logger.log(scope, 'resetting CodeLens provider');
 			}
 
-			const cfg = Container.config.codeLens;
+			const cfg = configuration.get('codeLens');
 			if (cfg.enabled && (cfg.recentChange.enabled || cfg.authors.enabled)) {
-				this.ensureProvider();
+				void this.ensureProvider();
 			} else {
 				this._providerDisposable?.dispose();
 				this._provider = undefined;
 			}
 
 			this._canToggle = cfg.recentChange.enabled || cfg.authors.enabled;
-			void setContext(ContextKeys.DisabledToggleCodeLens, !this._canToggle);
+			void setContext('gitlens:disabledToggleCodeLens', !this._canToggle);
 		}
 	}
 
-	private onBlameStateChanged(e: DocumentBlameStateChangeEvent<GitDocumentState>) {
-		// Only reset if we have saved, since the code lens won't naturally be re-rendered
-		if (this._provider === undefined || !e.blameable) return;
+	private onBlameStateChanged(e: DocumentBlameStateChangeEvent) {
+		// Only reset if we have saved, since the CodeLens won't naturally be re-rendered
+		if (this._provider == null || !e.blameable) return;
 
-		Logger.log('Blame state changed; resetting CodeLens provider');
-		this._provider.reset('saved');
+		using scope = startLogScope(`${getLoggableName(this)}.onBlameStateChanged`, false);
+
+		Logger.log(scope, 'resetting CodeLens provider');
+		this._provider.reset();
 	}
 
-	private onDirtyIdleTriggered(e: DocumentDirtyIdleTriggerEvent<GitDocumentState>) {
-		if (this._provider === undefined || !e.document.isBlameable) return;
+	private async onDirtyIdleTriggered(e: DocumentDirtyIdleTriggerEvent) {
+		if (this._provider == null) return;
 
-		const maxLines = Container.config.advanced.blame.sizeThresholdAfterEdit;
-		if (maxLines > 0 && e.document.lineCount > maxLines) return;
+		using scope = startLogScope(`${getLoggableName(this)}.onDirtyIdleTriggered`, false);
 
-		Logger.log('Dirty idle triggered; resetting CodeLens provider');
-		this._provider.reset('idle');
+		const status = await e.document.getStatus();
+		if (!status.blameable) return;
+
+		Logger.log(scope, 'resetting CodeLens provider');
+		this._provider.reset();
 	}
 
+	@log()
 	toggleCodeLens() {
-		if (!this._canToggle) return;
+		const scope = getLogScope();
 
-		Logger.log('toggleCodeLens()');
-		if (this._provider !== undefined) {
+		if (!this._canToggle) {
+			if (scope != null) {
+				setLogScopeExit(scope, ' \u2022 skipped, disabled');
+			}
+			return;
+		}
+
+		if (this._provider != null) {
 			this._providerDisposable?.dispose();
 			this._provider = undefined;
 
 			return;
 		}
 
-		this.ensureProvider();
+		void this.ensureProvider();
 	}
 
-	private ensureProvider() {
-		if (this._provider !== undefined) {
+	private async ensureProvider() {
+		if (this._provider != null) {
 			this._provider.reset();
 
 			return;
@@ -92,11 +105,13 @@ export class GitCodeLensController implements Disposable {
 
 		this._providerDisposable?.dispose();
 
-		this._provider = new GitCodeLensProvider(Container.context, Container.git, Container.tracker);
+		const { GitCodeLensProvider } = await import(/* webpackChunkName: "codelens" */ './codeLensProvider');
+
+		this._provider = new GitCodeLensProvider(this.container);
 		this._providerDisposable = Disposable.from(
 			languages.registerCodeLensProvider(GitCodeLensProvider.selector, this._provider),
-			Container.tracker.onDidChangeBlameState(this.onBlameStateChanged, this),
-			Container.tracker.onDidTriggerDirtyIdle(this.onDirtyIdleTriggered, this),
+			this.container.documentTracker.onDidChangeBlameState(this.onBlameStateChanged, this),
+			this.container.documentTracker.onDidTriggerDirtyIdle(this.onDirtyIdleTriggered, this),
 		);
 	}
 }

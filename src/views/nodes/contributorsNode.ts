@@ -1,68 +1,85 @@
-'use strict';
 import { ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
-import { Container } from '../../container';
-import { GitContributor, Repository } from '../../git/git';
-import { GitUri } from '../../git/gitUri';
-import { debug, gate, timeout } from '../../system';
-import { ContributorsView } from '../contributorsView';
-import { RepositoriesView } from '../repositoriesView';
+import type { GitUri } from '../../git/gitUri';
+import type { GitContributor } from '../../git/models/contributor';
+import { sortContributors } from '../../git/models/contributor';
+import type { Repository } from '../../git/models/repository';
+import { debug } from '../../system/decorators/log';
+import { configuration } from '../../system/vscode/configuration';
+import type { ViewsWithContributorsNode } from '../viewBase';
+import { CacheableChildrenViewNode } from './abstract/cacheableChildrenViewNode';
+import type { ViewNode } from './abstract/viewNode';
+import { ContextValues, getViewNodeId } from './abstract/viewNode';
 import { MessageNode } from './common';
 import { ContributorNode } from './contributorNode';
-import { RepositoryNode } from './repositoryNode';
-import { ContextValues, ViewNode } from './viewNode';
 
-export class ContributorsNode extends ViewNode<ContributorsView | RepositoriesView> {
-	static key = ':contributors';
-	static getId(repoPath: string): string {
-		return `${RepositoryNode.getId(repoPath)}${this.key}`;
-	}
-
+export class ContributorsNode extends CacheableChildrenViewNode<
+	'contributors',
+	ViewsWithContributorsNode,
+	ContributorNode
+> {
 	protected override splatted = true;
-
-	private _children: ContributorNode[] | undefined;
 
 	constructor(
 		uri: GitUri,
-		view: ContributorsView | RepositoriesView,
-		parent: ViewNode,
+		view: ViewsWithContributorsNode,
+		protected override readonly parent: ViewNode,
 		public readonly repo: Repository,
+		private readonly options?: { all?: boolean; showMergeCommits?: boolean; stats?: boolean },
 	) {
-		super(uri, view, parent);
+		super('contributors', uri, view, parent);
+
+		this.updateContext({ repository: repo });
+		this._uniqueId = getViewNodeId(this.type, this.context);
 	}
 
 	override get id(): string {
-		return ContributorsNode.getId(this.repo.path);
+		return this._uniqueId;
+	}
+
+	get repoPath(): string {
+		return this.repo.path;
 	}
 
 	async getChildren(): Promise<ViewNode[]> {
-		if (this._children == null) {
-			const all = Container.config.views.contributors.showAllBranches;
+		if (this.children == null) {
+			const all = this.options?.all ?? configuration.get('views.contributors.showAllBranches');
 
 			let ref: string | undefined;
 			// If we aren't getting all branches, get the upstream of the current branch if there is one
 			if (!all) {
 				try {
-					const branch = await Container.git.getBranch(this.uri.repoPath);
+					const branch = await this.view.container.git.getBranch(this.uri.repoPath);
 					if (branch?.upstream?.name != null && !branch.upstream.missing) {
 						ref = '@{u}';
 					}
 				} catch {}
 			}
 
-			const stats = Container.config.views.contributors.showStatistics;
+			const stats = this.options?.stats ?? configuration.get('views.contributors.showStatistics');
 
-			const contributors = await this.repo.getContributors({ all: all, ref: ref, stats: stats });
+			const contributors = await this.repo.git.getContributors({
+				all: all,
+				merges: this.options?.showMergeCommits,
+				ref: ref,
+				stats: stats,
+			});
 			if (contributors.length === 0) return [new MessageNode(this.view, this, 'No contributors could be found.')];
 
-			GitContributor.sort(contributors);
-			const presenceMap = await this.maybeGetPresenceMap(contributors);
+			sortContributors(contributors);
+			const presenceMap = this.view.container.vsls.active ? await this.getPresenceMap(contributors) : undefined;
 
-			this._children = contributors.map(
-				c => new ContributorNode(this.uri, this.view, this, c, { all: all, ref: ref, presence: presenceMap }),
+			this.children = contributors.map(
+				c =>
+					new ContributorNode(this.uri, this.view, this, c, {
+						all: all,
+						ref: ref,
+						presence: presenceMap,
+						showMergeCommits: this.options?.showMergeCommits,
+					}),
 			);
 		}
 
-		return this._children;
+		return this.children;
 	}
 
 	getTreeItem(): TreeItem {
@@ -76,28 +93,26 @@ export class ContributorsNode extends ViewNode<ContributorsView | RepositoriesVi
 	}
 
 	updateAvatar(email: string) {
-		if (this._children == null) return;
+		if (this.children == null) return;
 
-		for (const child of this._children) {
+		for (const child of this.children) {
 			if (child.contributor.email === email) {
 				void child.triggerChange();
 			}
 		}
 	}
 
-	@gate()
 	@debug()
 	override refresh() {
-		this._children = undefined;
+		super.refresh(true);
 	}
 
 	@debug({ args: false })
-	@timeout(250)
-	private async maybeGetPresenceMap(contributors: GitContributor[]) {
+	private async getPresenceMap(contributors: GitContributor[]) {
 		// Only get presence for the current user, because it is far too slow otherwise
 		const email = contributors.find(c => c.current)?.email;
 		if (email == null) return undefined;
 
-		return Container.vsls.getContactsPresence([email]);
+		return this.view.container.vsls.getContactsPresence([email]);
 	}
 }

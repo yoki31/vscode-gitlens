@@ -1,21 +1,19 @@
-'use strict';
 import { GlyphChars } from '../../constants';
-import { Container } from '../../container';
-import { GitReference, GitStatus, Repository } from '../../git/git';
-import { CommandQuickPickItem, GitCommandQuickPickItem } from '../../quickpicks';
-import { Strings } from '../../system';
-import {
-	PartialStepState,
-	pickRepositoryStep,
-	QuickCommand,
-	showRepositoryStatusStep,
-	StepGenerator,
-	StepResult,
-	StepState,
-} from '../quickCommand';
+import type { Container } from '../../container';
+import { createReference, getReferenceLabel } from '../../git/models/reference';
+import type { Repository } from '../../git/models/repository';
+import type { GitStatus } from '../../git/models/status';
+import { CommandQuickPickItem } from '../../quickpicks/items/common';
+import { GitWizardQuickPickItem } from '../../quickpicks/items/gitWizard';
+import { pad } from '../../system/string';
+import type { ViewsWithRepositoryFolders } from '../../views/viewBase';
+import type { PartialStepState, StepGenerator, StepState } from '../quickCommand';
+import { endSteps, QuickCommand, StepResultBreak } from '../quickCommand';
+import { pickRepositoryStep, showRepositoryStatusStep } from '../quickCommand.steps';
 
 interface Context {
 	repos: Repository[];
+	associatedView: ViewsWithRepositoryFolders;
 	status: GitStatus;
 	title: string;
 }
@@ -32,8 +30,8 @@ export interface StatusGitCommandArgs {
 type StatusStepState<T extends State = State> = ExcludeSome<StepState<T>, 'repo', string>;
 
 export class StatusGitCommand extends QuickCommand<State> {
-	constructor(args?: StatusGitCommandArgs) {
-		super('status', 'status', 'Status', {
+	constructor(container: Container, args?: StatusGitCommandArgs) {
+		super(container, 'status', 'status', 'Status', {
 			description: 'shows status information about a repository',
 		});
 
@@ -55,7 +53,8 @@ export class StatusGitCommand extends QuickCommand<State> {
 
 	protected async *steps(state: PartialStepState<State>): StepGenerator {
 		const context: Context = {
-			repos: [...(await Container.git.getOrderedRepositories())],
+			repos: this.container.git.openRepositories,
+			associatedView: this.container.views.commits,
 			status: undefined!,
 			title: this.title,
 		};
@@ -77,28 +76,27 @@ export class StatusGitCommand extends QuickCommand<State> {
 				} else {
 					const result = yield* pickRepositoryStep(state, context);
 					// Always break on the first step (so we will go back)
-					if (result === StepResult.Break) break;
+					if (result === StepResultBreak) break;
 
 					state.repo = result;
 				}
 			}
 
-			context.status = (await state.repo.getStatus())!;
+			context.status = (await state.repo.git.getStatus())!;
 			if (context.status == null) return;
 
-			context.title = `${this.title}${Strings.pad(GlyphChars.Dot, 2, 2)}${GitReference.toString(
-				GitReference.create(context.status.branch, state.repo.path, {
+			context.title = `${this.title}${pad(GlyphChars.Dot, 2, 2)}${getReferenceLabel(
+				createReference(context.status.branch, state.repo.path, {
 					refType: 'branch',
 					name: context.status.branch,
 					remote: false,
-					upstream:
-						context.status.upstream != null ? { name: context.status.upstream, missing: false } : undefined,
+					upstream: context.status.upstream,
 				}),
 				{ icon: false },
 			)}`;
 
 			const result = yield* showRepositoryStatusStep(state as StatusStepState, context);
-			if (result === StepResult.Break) {
+			if (result === StepResultBreak) {
 				// If we skipped the previous step, make sure we back up past it
 				if (skippedStepOne) {
 					state.counter--;
@@ -107,18 +105,18 @@ export class StatusGitCommand extends QuickCommand<State> {
 				continue;
 			}
 
-			if (result instanceof GitCommandQuickPickItem) {
+			if (result instanceof GitWizardQuickPickItem) {
 				const r = yield* result.executeSteps(this.pickedVia);
 				state.counter--;
-				if (r === StepResult.Break) {
-					QuickCommand.endSteps(state);
+				if (r === StepResultBreak) {
+					endSteps(state);
 				}
 
 				continue;
 			}
 
 			if (result instanceof CommandQuickPickItem) {
-				QuickCommand.endSteps(state);
+				endSteps(state);
 
 				void result.execute();
 				break;

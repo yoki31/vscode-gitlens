@@ -1,7 +1,6 @@
-'use strict';
-import { RemoteProviderReference } from './remoteProvider';
+import type { ProviderReference } from './remoteProvider';
 
 export interface DefaultBranch {
-	provider: RemoteProviderReference;
+	provider: ProviderReference;
 	name: string;
 }

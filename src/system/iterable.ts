@@ -1,5 +1,3 @@
-'use strict';
-
 export function* chunk<T>(source: T[], size: number): Iterable<T[]> {
 	let chunk: T[] = [];
 
@@ -17,6 +15,12 @@ export function* chunk<T>(source: T[], size: number): Iterable<T[]> {
 		yield chunk;
 	}
 }
+
+export const IterUtils = {
+	notNull: function <T>(x: T | null | undefined): x is T {
+		return Boolean(x);
+	},
+};
 
 export function* chunkByStringLength(source: string[], maxLength: number): Iterable<string[]> {
 	let chunk: string[] = [];
@@ -40,19 +44,18 @@ export function* chunkByStringLength(source: string[], maxLength: number): Itera
 	}
 }
 
-export function count<T>(source: Iterable<T> | IterableIterator<T>, predicate?: (item: T) => boolean): number {
+export function count<T>(
+	source: Iterable<T> | IterableIterator<T> | undefined,
+	predicate?: (item: T) => boolean,
+): number {
+	if (source == null) return 0;
+
 	let count = 0;
-	let next: IteratorResult<T>;
-
-	while (true) {
-		next = (source as IterableIterator<T>).next();
-		if (next.done) break;
-
-		if (predicate === undefined || predicate(next.value)) {
+	for (const item of source) {
+		if (predicate == null || predicate(item)) {
 			count++;
 		}
 	}
-
 	return count;
 }
 
@@ -63,9 +66,18 @@ export function every<T>(source: Iterable<T> | IterableIterator<T>, predicate: (
 	return true;
 }
 
-export function filter<T>(source: Iterable<T | undefined | null> | IterableIterator<T | undefined | null>): Iterable<T>;
+export function filter<T>(
+	source: Iterable<T | undefined | null> | IterableIterator<T | undefined | null>,
+): Iterable<NonNullable<T>>;
+export function filter<T, U extends T>(
+	source: Iterable<T> | IterableIterator<T>,
+	predicate: (item: T) => item is U,
+): Iterable<U>;
 export function filter<T>(source: Iterable<T> | IterableIterator<T>, predicate: (item: T) => boolean): Iterable<T>;
-export function* filter<T>(source: Iterable<T> | IterableIterator<T>, predicate?: (item: T) => boolean): Iterable<T> {
+export function* filter<T, U extends T = T>(
+	source: Iterable<T> | IterableIterator<T>,
+	predicate?: ((item: T) => item is U) | ((item: T) => boolean),
+): Iterable<T | U> {
 	if (predicate === undefined) {
 		for (const item of source) {
 			if (item != null) yield item;
@@ -95,24 +107,117 @@ export function forEach<T>(source: Iterable<T> | IterableIterator<T>, fn: (item:
 	}
 }
 
-export function find<T>(source: Iterable<T> | IterableIterator<T>, predicate: (item: T) => boolean): T | null {
+export function find<T>(source: Iterable<T> | IterableIterator<T>, predicate: (item: T) => boolean): T | undefined {
 	for (const item of source) {
 		if (predicate(item)) return item;
 	}
-	return null;
+	return undefined;
 }
 
-export function first<T>(source: Iterable<T>): T {
-	return source[Symbol.iterator]().next().value;
+export function findIndex<T>(source: Iterable<T> | IterableIterator<T>, predicate: (item: T) => boolean): number {
+	let i = 0;
+	for (const item of source) {
+		if (predicate(item)) return i;
+		i++;
+	}
+	return -1;
+}
+
+export function first<T>(source: Iterable<T> | IterableIterator<T>): T | undefined {
+	return source[Symbol.iterator]().next().value as T | undefined;
+}
+
+export function flatCount<T>(
+	source: Iterable<T> | IterableIterator<T> | undefined,
+	accumulator: (item: T) => number,
+): number {
+	if (source == null) return 0;
+
+	let count = 0;
+	for (const item of source) {
+		count += accumulator(item);
+	}
+	return count;
 }
 
 export function* flatMap<T, TMapped>(
 	source: Iterable<T> | IterableIterator<T>,
 	mapper: (item: T) => Iterable<TMapped>,
-): Iterable<TMapped> {
+): IterableIterator<TMapped> {
 	for (const item of source) {
 		yield* mapper(item);
 	}
+}
+
+export function flatten<T>(source: Iterable<Iterable<T>> | IterableIterator<IterableIterator<T>>): IterableIterator<T> {
+	return flatMap(source, i => i);
+}
+
+export function groupBy<T, K extends PropertyKey>(
+	source: Iterable<T> | IterableIterator<T>,
+	getGroupingKey: (item: T) => K,
+): Record<string, T[]> {
+	const result: Record<K, T[]> = Object.create(null);
+
+	for (const current of source) {
+		const key = getGroupingKey(current);
+
+		const group = result[key];
+		if (group == null) {
+			result[key] = [current];
+		} else {
+			group.push(current);
+		}
+	}
+
+	return result;
+}
+
+export function groupByMap<TKey, TValue>(
+	source: Iterable<TValue> | IterableIterator<TValue>,
+	getGroupingKey: (item: TValue) => TKey,
+	options?: { filterNullGroups?: boolean },
+): Map<TKey, TValue[]> {
+	const result = new Map<TKey, TValue[]>();
+
+	const filterNullGroups = options?.filterNullGroups ?? false;
+
+	for (const current of source) {
+		const key = getGroupingKey(current);
+		if (key == null && filterNullGroups) continue;
+
+		const group = result.get(key);
+		if (group == null) {
+			result.set(key, [current]);
+		} else {
+			group.push(current);
+		}
+	}
+
+	return result;
+}
+
+export function groupByFilterMap<TKey, TValue, TMapped>(
+	source: Iterable<TValue> | IterableIterator<TValue>,
+	getGroupingKey: (item: TValue) => TKey,
+	predicateMapper: (item: TValue) => TMapped | null | undefined,
+): Map<TKey, TMapped[]> {
+	const result = new Map<TKey, TMapped[]>();
+
+	for (const current of source) {
+		const mapped = predicateMapper(current);
+		if (mapped == null) continue;
+
+		const key = getGroupingKey(current);
+		const group = result.get(key);
+		if (group == null) {
+			result.set(key, [mapped]);
+		} else {
+			group.push(mapped);
+		}
+	}
+
+	return result;
 }
 
 export function has<T>(source: Iterable<T> | IterableIterator<T>, item: T): boolean {
@@ -124,25 +229,19 @@ export function isIterable(source: Iterable<any>): boolean {
 }
 
 export function join(source: Iterable<any>, separator: string): string {
-	let value = '';
-
 	const iterator = source[Symbol.iterator]();
 	let next = iterator.next();
-	if (next.done) return value;
+	if (next.done) return '';
 
+	let result = String(next.value);
 	while (true) {
-		const s = next.value.toString();
-
 		next = iterator.next();
-		if (next.done) {
-			value += s;
-			break;
-		}
+		if (next.done) break;
 
-		value += `${s}${separator}`;
+		result += `${separator}${next.value}`;
 	}
 
-	return value;
+	return result;
 }
 
 export function last<T>(source: Iterable<T>): T | undefined {
@@ -156,14 +255,56 @@ export function last<T>(source: Iterable<T>): T | undefined {
 export function* map<T, TMapped>(
 	source: Iterable<T> | IterableIterator<T>,
 	mapper: (item: T) => TMapped,
-): Iterable<TMapped> {
+): IterableIterator<TMapped> {
 	for (const item of source) {
 		yield mapper(item);
 	}
 }
 
+export function max(source: Iterable<number> | IterableIterator<number>): number;
+export function max<T>(source: Iterable<T> | IterableIterator<T>, getValue: (item: T) => number): number;
+export function max<T>(source: Iterable<T> | IterableIterator<T>, getValue?: (item: T) => number): number {
+	let max = Number.NEGATIVE_INFINITY;
+	if (getValue == null) {
+		for (const item of source as Iterable<number> | IterableIterator<number>) {
+			if (item > max) {
+				max = item;
+			}
+		}
+	} else {
+		for (const item of source) {
+			const value = getValue(item);
+			if (value > max) {
+				max = value;
+			}
+		}
+	}
+	return max;
+}
+
+export function min(source: Iterable<number> | IterableIterator<number>): number;
+export function min<T>(source: Iterable<T> | IterableIterator<T>, getValue: (item: T) => number): number;
+export function min<T>(source: Iterable<T> | IterableIterator<T>, getValue?: (item: T) => number): number {
+	let min = Number.POSITIVE_INFINITY;
+	if (getValue == null) {
+		for (const item of source as Iterable<number> | IterableIterator<number>) {
+			if (item < min) {
+				min = item;
+			}
+		}
+	} else {
+		for (const item of source) {
+			const value = getValue(item);
+			if (value < min) {
+				min = value;
+			}
+		}
+	}
+	return min;
+}
+
 export function next<T>(source: IterableIterator<T>): T {
-	return source.next().value;
+	return source.next().value as T;
 }
 
 export function* skip<T>(source: Iterable<T> | IterableIterator<T>, count: number): IterableIterator<T> {
@@ -181,6 +322,24 @@ export function some<T>(source: Iterable<T> | IterableIterator<T>, predicate: (i
 	return false;
 }
 
+export function sum<T extends number>(source: Iterable<T> | IterableIterator<T> | undefined): number;
+export function sum<T>(source: Iterable<T> | IterableIterator<T> | undefined, getValue: (item: T) => number): number;
+export function sum<T>(source: Iterable<T> | IterableIterator<T> | undefined, getValue?: (item: T) => number): number {
+	if (source == null) return 0;
+
+	let sum = 0;
+	if (getValue == null) {
+		for (const item of source as Iterable<number> | IterableIterator<number>) {
+			sum += item;
+		}
+	} else {
+		for (const item of source) {
+			sum += getValue(item);
+		}
+	}
+	return sum;
+}
+
 export function* take<T>(source: Iterable<T> | IterableIterator<T>, count: number): Iterable<T> {
 	if (count > 0) {
 		let i = 0;
@@ -192,10 +351,36 @@ export function* take<T>(source: Iterable<T> | IterableIterator<T>, count: numbe
 	}
 }
 
-export function* union<T>(...sources: (Iterable<T> | IterableIterator<T>)[]): Iterable<T> {
+export function* union<T>(...sources: (Iterable<T> | IterableIterator<T> | undefined)[]): Iterable<T> {
 	for (const source of sources) {
+		if (source == null) continue;
+
 		for (const item of source) {
 			yield item;
 		}
 	}
+}
+
+export function uniqueBy<TKey, TValue>(
+	source: Iterable<TValue> | IterableIterator<TValue>,
+	getUniqueKey: (item: TValue) => TKey,
+	onDuplicate: (original: TValue, current: TValue) => TValue | void,
+): IterableIterator<TValue> {
+	const result = new Map<TKey, TValue>();
+
+	for (const current of source) {
+		const key = getUniqueKey(current);
+
+		const original = result.get(key);
+		if (original === undefined) {
+			result.set(key, current);
+		} else {
+			const updated = onDuplicate(original, current);
+			if (updated !== undefined) {
+				result.set(key, updated);
+			}
+		}
+	}
+
+	return result.values();
 }
